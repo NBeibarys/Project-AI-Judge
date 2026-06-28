@@ -1,0 +1,25 @@
+# Local secrets and credentials.
+.env
+client_hub_credentials.json
+*service-account*.json
+*credentials*.json
+
+# Applicant data and local processing state.
+*.xlsx
+checkpoint.json
+.fellowship_work/
+
+# Python-generated files.
+__pycache__/
+*.py[cod]
+.ruff_cache/
+
+# Local agent and editor state.
+.claude/
+.superpowers/
+
+# Operating-system and editor noise.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
