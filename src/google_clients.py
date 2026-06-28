@@ -185,8 +185,11 @@ def _col_index(col_letter: str) -> int:
     column-letter overrides (AI_SCORE_COLUMN=U in .env) since those come
     in as letters but col_map elsewhere uses 0-indexed positions.
     """
+    normalized = col_letter.strip().upper()
+    if not normalized or not normalized.isascii() or not normalized.isalpha():
+        raise ValueError(f"Invalid Google Sheets column: {col_letter!r}")
     n = 0
-    for ch in col_letter.strip().upper():
+    for ch in normalized:
         n = n * 26 + (ord(ch) - ord("A") + 1)
     return n - 1
 

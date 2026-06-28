@@ -8,10 +8,15 @@ What matters at 100+ rows is skipping rows already graded on rerun
 import json
 import os
 import threading
-from typing import Optional
+import hashlib
 
 
 class Checkpoint:
+    @staticmethod
+    def _key(row_id: str) -> str:
+        """Pseudonymize applicant identifiers before writing local state."""
+        return hashlib.sha256(row_id.encode("utf-8")).hexdigest()
+
     def __init__(self, path: str):
         self.path = path
         self._lock = threading.Lock()  # writes happen from a ThreadPoolExecutor
@@ -33,20 +38,14 @@ class Checkpoint:
 
     def is_done(self, row_id: str) -> bool:
         with self._lock:
-            entry = self._data.get(row_id)
+            entry = self._data.get(self._key(row_id))
             return bool(entry and entry.get("status") in ("done", "human_review"))
 
-    def get(self, row_id: str) -> Optional[dict]:
+    def mark_done(self, row_id: str, human_review_flag: bool):
         with self._lock:
-            return self._data.get(row_id)
-
-    def mark_done(self, row_id: str, score, reasoning: str, human_review_flag: bool):
-        with self._lock:
-            self._data[row_id] = {
+            # Resumption needs only routing state; grades remain in Sheets.
+            self._data[self._key(row_id)] = {
                 "status": "human_review" if human_review_flag else "done",
-                "score": score,
-                "reasoning": reasoning,
-                "human_review_flag": human_review_flag,
             }
             self._flush()
 
@@ -55,5 +54,5 @@ class Checkpoint:
         # should retry them, since the failure is usually transient
         # (download timeout, API rate limit) rather than a content issue.
         with self._lock:
-            self._data[row_id] = {"status": "failed", "error": error}
+            self._data[self._key(row_id)] = {"status": "failed", "error": error}
             self._flush()

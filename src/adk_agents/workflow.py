@@ -16,14 +16,17 @@ APP_NAME = "fellowship_review"
 
 class AdkReviewWorkflow:
     def __init__(self, analyzer_model: str, grader_model: str):
+        # certifi provides a consistent trust store across Windows deployments.
         os.environ["SSL_CERT_FILE"] = certifi.where()
-        self.root_agent = build_root_agent(analyzer_model, grader_model)
+        # Keep only immutable configuration: batch threads must not share agent state.
+        self.analyzer_model = analyzer_model
+        self.grader_model = grader_model
 
     async def _invoke_async(self, state: dict) -> dict:
         session_service = InMemorySessionService()
         runner = Runner(
             app_name=APP_NAME,
-            agent=self.root_agent,
+            agent=build_root_agent(self.analyzer_model, self.grader_model),
             session_service=session_service,
         )
         session_id = uuid.uuid4().hex
@@ -42,14 +45,29 @@ class AdkReviewWorkflow:
         )
 
         parts = []
-        if state.get("video_url"):
-            parts.append(
-                types.Part.from_uri(
-                    file_uri=state["video_url"],
-                    mime_type=state.get("video_mime_type", "video/mp4"),
+        if state.get("video_url") and not state.get("video_requires_url_context"):
+            mime_type = state.get("video_mime_type")
+            if mime_type:
+                parts.append(
+                    types.Part.from_uri(
+                        file_uri=state["video_url"],
+                        mime_type=mime_type,
+                    )
                 )
-            )
+            else:
+                # Native YouTube input is valid without MIME, but Part.from_uri()
+                # attempts local extension inference; construct FileData directly.
+                parts.append(
+                    types.Part(
+                        file_data=types.FileData(file_uri=state["video_url"])
+                    )
+                )
         text = state.get("raw_row_text", "")
+        if state.get("video_requires_url_context"):
+            text += (
+                "\n\nVIDEO WEBPAGE REQUIRES URL CONTEXT: "
+                f"{state['video_url']}"
+            )
         if state.get("video_error"):
             text += f"\n\nVIDEO UNAVAILABLE: {state['video_error']}"
         parts.append(types.Part(text=text))

@@ -27,6 +27,13 @@ The original user message contains the applicant's complete eligible submission
 as text and, when available, their video as native multimodal input. Do not open
 or infer content from other links appearing in the text.
 
+The submitted video may instead be identified by the explicit
+"VIDEO WEBPAGE REQUIRES URL CONTEXT" label. In that case, use URL context only
+for that labeled URL to interpret the page and locate the submitted video.
+Finish investigating and analyzing the video before producing your evidence
+report. If the page does not expose playable video content, state that the
+video source is unavailable; never infer visual observations from page text.
+
 For each rubric criterion, extract concrete evidence from the original sources.
 Quote or closely paraphrase; never invent unsupported claims. If the video is
 missing or unavailable, say so explicitly.
@@ -51,6 +58,10 @@ contains the same complete application text and video seen by the analyst.
 Verify every analyst claim directly against those original sources. Flag
 fabrication, exaggeration, unsupported video observations, and clearly relevant
 material the analyst missed.
+
+If the video is represented by an explicit "VIDEO WEBPAGE REQUIRES URL CONTEXT"
+label, independently use URL context on that labeled URL. Do not approve visual
+claims that cannot be verified from playable source content.
 
 If any evidence is unreliable or incomplete, set approved=false and give exact,
 actionable correction instructions in feedback. Do not assign a score when

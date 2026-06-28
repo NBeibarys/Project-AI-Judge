@@ -13,10 +13,16 @@ checkpoint.json
 __pycache__/
 *.py[cod]
 .ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
 # Local agent and editor state.
+.agents/
 .claude/
 .superpowers/
+docs/superpowers/
+.gstack/
 
 # Operating-system and editor noise.
 .DS_Store

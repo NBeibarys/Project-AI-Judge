@@ -1,7 +1,7 @@
 """
 Batch driver: reads the sheet, skips already-checkpointed rows, runs the
 ADK analyst/grader workflow per applicant (in parallel and bounded by
-max_concurrency), then writes approved results back to the sheet.
+max_concurrency), then writes approved or human-review results to the sheet.
 
 Video URL normalization happens here before ADK receives the application as
 native multimodal input. The agents own analysis, verification, retry routing,
@@ -12,7 +12,6 @@ shared state between applicants — so a ThreadPoolExecutor is sufficient;
 no need for asyncio's added complexity for what's mostly I/O-bound work
 (API calls) anyway.
 """
-import traceback
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -102,9 +101,15 @@ def process_row(
     }
     submitted_video_url = _submitted_video_url(header, row)
     if submitted_video_url:
+        initial_state["submitted_video_url"] = submitted_video_url
         try:
-            initial_state["video_url"] = resolve_video_url(submitted_video_url)
-            initial_state["video_mime_type"] = "video/mp4"
+            resolved_video = resolve_video_url(submitted_video_url)
+            initial_state["video_url"] = resolved_video.uri
+            initial_state["video_mime_type"] = resolved_video.mime_type
+            initial_state["video_source"] = resolved_video.source
+            initial_state["video_requires_url_context"] = (
+                resolved_video.requires_url_context
+            )
         except VideoResolutionError as exc:
             initial_state["video_error"] = str(exc)
 
@@ -121,8 +126,12 @@ def process_row(
         reasoning = f"[NEEDS HUMAN REVIEW] {reasoning}"
         score = ""
 
-    checkpoint.mark_done(row_id, score, reasoning, human_review_flag)
-    return row_id, {"score": score, "reasoning": reasoning}
+    # The caller owns completion because only it observes the Sheets commit.
+    return row_id, {
+        "score": score,
+        "reasoning": reasoning,
+        "human_review_flag": human_review_flag,
+    }
 
 
 def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
@@ -175,6 +184,8 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
         result["score"],
         result["reasoning"],
     )
+    # Checkpoint only after the authoritative external write succeeds.
+    checkpoint.mark_done(row_id, result["human_review_flag"])
     return {"row_id": row_id, **result}
 
 
@@ -230,9 +241,15 @@ def run_batch(config: Config):
                     sheets_service, config.sheet_id, sheet_name, sheet_row_number,
                     col_map, result["score"], result["reasoning"],
                 )
+                # Failed writes remain retryable rather than becoming lost grades.
+                checkpoint.mark_done(
+                    row_id,
+                    result["human_review_flag"],
+                )
                 results[row_id] = result
-            except Exception as exc:  # noqa: BLE001 — one bad row must not kill the batch
-                checkpoint.mark_failed(row_id, f"{exc}\n{traceback.format_exc()}")
+            except Exception as exc:  # noqa: BLE001 — isolate each applicant failure
+                # Provider messages may echo submitted PII, so persist only its type.
+                checkpoint.mark_failed(row_id, type(exc).__name__)
                 errors[row_id] = str(exc)
 
     return {"graded": results, "errors": errors}

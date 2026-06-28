@@ -13,7 +13,6 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Config:
-    google_api_key: str
     sheet_id: str
     sheet_range: str
     header_row: int
@@ -25,23 +24,20 @@ class Config:
     grader_model: str
     max_concurrency: int
     checkpoint_path: str
-    work_dir: str
 
     @classmethod
     def from_env(cls) -> "Config":
         sheet_id = os.environ.get("FELLOWSHIP_SHEET_ID", "")
-        google_key = os.environ.get("GOOGLE_API_KEY", "")
         sa_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_PATH", "")
 
         if not sheet_id:
             raise RuntimeError("FELLOWSHIP_SHEET_ID not set")
-        if not google_key:
+        if not os.environ.get("GOOGLE_API_KEY"):
             raise RuntimeError("GOOGLE_API_KEY not set")
         if not sa_path or not os.path.isfile(sa_path):
             raise RuntimeError(f"GOOGLE_SERVICE_ACCOUNT_PATH invalid: {sa_path}")
 
         return cls(
-            google_api_key=google_key,
             sheet_id=sheet_id,
             # Defaults point at "Grading Final" (this project's real sheet),
             # not the raw form-response tab — it already has all input
@@ -63,5 +59,4 @@ class Config:
             grader_model=os.environ.get("GRADER_MODEL", "gemini-3.5-flash"),
             max_concurrency=int(os.environ.get("MAX_CONCURRENCY", "4")),
             checkpoint_path=os.environ.get("CHECKPOINT_PATH", "checkpoint.json"),
-            work_dir=os.environ.get("WORK_DIR", ".fellowship_work"),
         )

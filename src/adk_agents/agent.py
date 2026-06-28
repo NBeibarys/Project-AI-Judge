@@ -7,6 +7,7 @@ from google.adk.agents import Agent, BaseAgent, InvocationContext, LoopAgent
 from google.adk.apps import App
 from google.adk.events import Event, EventActions
 from google.adk.models.google_llm import Gemini
+from google.adk.tools import url_context
 from google.genai import types
 
 from .prompts import ANALYST_INSTRUCTION, GRADER_HEAD_INSTRUCTION
@@ -91,6 +92,7 @@ def build_root_agent(analyzer_model: str, grader_model: str) -> LoopAgent:
         instruction=ANALYST_INSTRUCTION,
         output_schema=AnalystReport,
         output_key="analyst_report",
+        tools=[url_context],
         timeout=240,
     )
     grader_head = Agent(
@@ -103,6 +105,7 @@ def build_root_agent(analyzer_model: str, grader_model: str) -> LoopAgent:
         instruction=GRADER_HEAD_INSTRUCTION,
         output_schema=GraderVerdict,
         output_key="grader_verdict",
+        tools=[url_context],
         timeout=240,
     )
     gate = ApprovalGate(name="approval_gate")
@@ -115,7 +118,7 @@ def build_root_agent(analyzer_model: str, grader_model: str) -> LoopAgent:
 
 
 root_agent = build_root_agent(
-    os.environ.get("ANALYZER_MODEL", "gemini-2.5-flash"),
-    os.environ.get("GRADER_MODEL", "gemini-2.5-flash"),
+    os.environ.get("ANALYZER_MODEL", "gemini-3.5-flash"),
+    os.environ.get("GRADER_MODEL", "gemini-3.5-flash"),
 )
 app = App(name="adk_agents", root_agent=root_agent)

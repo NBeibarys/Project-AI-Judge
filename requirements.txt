@@ -1,5 +1,8 @@
-google-adk>=1.0.0
-google-genai>=1.0.0
-google-api-python-client>=2.140.0
-google-auth>=2.34.0
-certifi
+# Direct runtime dependencies are pinned to the versions validated together.
+google-adk==2.3.0
+google-genai==2.10.0
+google-api-python-client==2.198.0
+google-auth==2.55.0
+certifi==2026.2.25
+pydantic==2.13.4
+python-dotenv==1.2.2

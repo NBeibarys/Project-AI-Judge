@@ -1,27 +1,15 @@
 """CLI entry point for the checkpointed ADK batch review."""
-import os
 import sys
+
+from dotenv import load_dotenv
 
 from .config import Config
 from .pipeline import run_batch
 
 
-def _load_dotenv(path: str = ".env"):
-    """Load simple KEY=VALUE settings without overriding shell exports."""
-    if not os.path.isfile(path):
-        return
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            if value and key not in os.environ:
-                os.environ[key] = value
-
-
 def main():
-    _load_dotenv()
+    # The maintained parser correctly handles quoting, escapes, and interpolation.
+    load_dotenv(override=False)
     config = Config.from_env()
     print(f"Running ADK batch against sheet {config.sheet_id}")
 

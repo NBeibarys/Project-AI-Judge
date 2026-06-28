@@ -1,69 +1,385 @@
-"""Resolve submitted video links into URLs Gemini can read directly.
+"""Resolve public video links without downloading video bodies.
 
-Only small HTML pages may be fetched (for Loom metadata). Video bytes are
-never downloaded or copied by this module.
+The resolver understands web standards rather than a fixed provider catalog.
+It reads response headers and a bounded amount of HTML metadata, while Gemini's
+URL-context tool handles semantically ambiguous webpages inside the analyst.
 """
-from html.parser import HTMLParser
-from typing import Callable, Optional
-from urllib.request import Request, urlopen
 
-from .google_clients import extract_drive_file_id
+import ipaddress
+import json
+import mimetypes
+import re
+import socket
+from dataclasses import dataclass
+from html.parser import HTMLParser
+from typing import Callable
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+
+# These are Gemini's documented video inputs, not deployment-specific policy.
+SUPPORTED_VIDEO_MIME_TYPES = frozenset(
+    {
+        "video/mp4",
+        "video/mpeg",
+        "video/mov",
+        "video/avi",
+        "video/x-flv",
+        "video/mpg",
+        "video/webm",
+        "video/wmv",
+        "video/3gpp",
+    }
+)
+# Gemini documents a 100 MB ceiling for externally fetched HTTPS files.
+MAX_EXTERNAL_VIDEO_BYTES = 100 * 1024 * 1024
+# Bounded HTML protects memory while covering ordinary metadata-heavy pages.
+MAX_METADATA_HTML_BYTES = 2 * 1024 * 1024
+MAX_REDIRECTS = 5
+METADATA_TIMEOUT_SECONDS = 15
+YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+ABSOLUTE_HTTPS_URL = re.compile(r'https://[^"\'<>\s\\\\]+')
 
 
 class VideoResolutionError(ValueError):
-    """A submitted link could not be resolved to video content."""
+    """A submitted link cannot be used safely as public video input."""
 
 
-class _OpenGraphVideoParser(HTMLParser):
-    def __init__(self):
+@dataclass(frozen=True)
+class ResourceMetadata:
+    """Headers and optional bounded HTML discovered without reading video bytes."""
+
+    final_url: str
+    content_type: str
+    content_length: int | None
+    html: str | None = None
+
+
+@dataclass(frozen=True)
+class ResolvedVideo:
+    """A validated media reference shared by the analyst and grader-head."""
+
+    uri: str
+    mime_type: str | None
+    source: str
+    requires_url_context: bool = False
+
+
+def _public_https_host(url: str) -> str:
+    """Validate the URL boundary before the application makes any request."""
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if parsed.scheme != "https" or not host or parsed.username or parsed.password:
+        raise VideoResolutionError(
+            "Video URLs must use public HTTPS without embedded credentials."
+        )
+    try:
+        addresses = {entry[4][0] for entry in socket.getaddrinfo(host, 443)}
+    except socket.gaierror as exc:
+        raise VideoResolutionError(f"Video host could not be resolved: {host}.") from exc
+    if not addresses or any(
+        not ipaddress.ip_address(address).is_global for address in addresses
+    ):
+        raise VideoResolutionError(
+            "Video host resolves to a private or non-public network address."
+        )
+    return host
+
+
+class _SafeRedirectHandler(HTTPRedirectHandler):
+    """Validate every redirect hop and prevent unbounded redirect chains."""
+
+    def __init__(self) -> None:
         super().__init__()
-        self.video_url: Optional[str] = None
+        self.redirect_count = 0
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self.redirect_count += 1
+        if self.redirect_count > MAX_REDIRECTS:
+            raise VideoResolutionError("Video URL exceeded the redirect limit.")
+        _public_https_host(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _normalized_content_type(raw_value: str | None, url: str) -> str:
+    """Prefer authoritative headers, then infer a standard type from the path."""
+
+    declared = (raw_value or "").split(";", 1)[0].strip().lower()
+    if declared and declared != "application/octet-stream":
+        return declared
+    inferred, _encoding = mimetypes.guess_type(url)
+    return (inferred or declared).lower()
+
+
+def _content_length(raw_value: str | None) -> int | None:
+    """Treat absent length as unknown while rejecting malformed negative values."""
+
+    if raw_value is None:
+        return None
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise VideoResolutionError("Video server returned an invalid content length.") from exc
+    if value < 0:
+        raise VideoResolutionError("Video server returned a negative content length.")
+    return value
+
+
+def _request_metadata(url: str) -> ResourceMetadata:
+    """Read headers and, only for HTML, a bounded page fragment."""
+
+    _public_https_host(url)
+    opener = build_opener(_SafeRedirectHandler())
+    headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
+    used_head = True
+    try:
+        response = opener.open(
+            Request(url, headers=headers, method="HEAD"),
+            timeout=METADATA_TIMEOUT_SECONDS,
+        )
+    except HTTPError as exc:
+        # Some otherwise valid media servers reject HEAD; GET still reads no video
+        # bytes because the response is closed after headers unless it is HTML.
+        if exc.code not in {403, 405, 501}:
+            raise VideoResolutionError(f"Video metadata request failed: HTTP {exc.code}.") from exc
+        used_head = False
+        response = opener.open(
+            Request(url, headers=headers, method="GET"),
+            timeout=METADATA_TIMEOUT_SECONDS,
+        )
+
+    if used_head:
+        preliminary_type = _normalized_content_type(
+            response.headers.get("Content-Type"),
+            response.geturl(),
+        )
+        if preliminary_type in {"text/html", "application/xhtml+xml"}:
+            # HEAD has no page body, so replace it with one bounded HTML request.
+            response.close()
+            response = opener.open(
+                Request(url, headers=headers, method="GET"),
+                timeout=METADATA_TIMEOUT_SECONDS,
+            )
+
+    with response:
+        final_url = response.geturl()
+        _public_https_host(final_url)
+        content_type = _normalized_content_type(
+            response.headers.get("Content-Type"),
+            final_url,
+        )
+        length = _content_length(response.headers.get("Content-Length"))
+        html = None
+        if content_type in {"text/html", "application/xhtml+xml"}:
+            # Reading page markup is metadata inspection, not video downloading.
+            raw_html = response.read(MAX_METADATA_HTML_BYTES + 1)
+            if len(raw_html) > MAX_METADATA_HTML_BYTES:
+                raise VideoResolutionError("Video webpage metadata is too large.")
+            html = raw_html.decode(
+                response.headers.get_content_charset() or "utf-8",
+                errors="replace",
+            )
+        return ResourceMetadata(final_url, content_type, length, html)
+
+
+class _VideoMetadataParser(HTMLParser):
+    """Collect standards-based video candidates from arbitrary webpages."""
+
+    def __init__(self, page_url: str) -> None:
+        super().__init__()
+        self.page_url = page_url
+        self.candidates: list[tuple[str, str | None, str]] = []
+        self._json_ld = False
+        self._json_ld_chunks: list[str] = []
 
     def handle_starttag(self, tag, attrs):
-        if tag.lower() != "meta" or self.video_url:
-            return
-        values = {key.lower(): value for key, value in attrs if value is not None}
-        if values.get("property", "").lower() in {
-            "og:video",
-            "og:video:url",
-            "og:video:secure_url",
-        }:
-            self.video_url = values.get("content")
+        values = {
+            key.lower(): value
+            for key, value in attrs
+            if key and value is not None
+        }
+        tag = tag.lower()
+        if tag == "meta":
+            name = (values.get("property") or values.get("name") or "").lower()
+            content = values.get("content")
+            if content and name in {
+                "og:video",
+                "og:video:url",
+                "og:video:secure_url",
+                "twitter:player:stream",
+            }:
+                self.candidates.append(
+                    (urljoin(self.page_url, content), None, name)
+                )
+        elif tag in {"video", "source"} and values.get("src"):
+            self.candidates.append(
+                (
+                    urljoin(self.page_url, values["src"]),
+                    values.get("type"),
+                    f"html:{tag}",
+                )
+            )
+        elif (
+            tag == "script"
+            and values.get("type", "").lower() == "application/ld+json"
+        ):
+            self._json_ld = True
+            self._json_ld_chunks = []
 
-
-def _fetch_html(url: str) -> str:
-    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urlopen(request, timeout=15) as response:
-        return response.read(2_000_000).decode(
-            response.headers.get_content_charset() or "utf-8",
-            errors="replace",
+    def handle_data(self, data):
+        if self._json_ld:
+            self._json_ld_chunks.append(data)
+        # Some players publish media configuration in executable page data
+        # instead of standards-based tags. Extract candidate URLs generically;
+        # deterministic metadata validation decides whether each is video.
+        normalized = (
+            data.replace("\\u003d", "=")
+            .replace("\\u0026", "&")
+            .replace("\\/", "/")
         )
+        for match in ABSOLUTE_HTTPS_URL.finditer(normalized):
+            context = normalized[max(0, match.start() - 512) : match.start()]
+            declared_mime = next(
+                (
+                    mime
+                    for mime in SUPPORTED_VIDEO_MIME_TYPES
+                    if mime in context
+                ),
+                None,
+            )
+            self.candidates.append(
+                (match.group(0), declared_mime, "page-config:url")
+            )
+
+    def handle_endtag(self, tag):
+        if tag.lower() != "script" or not self._json_ld:
+            return
+        self._json_ld = False
+        try:
+            document = json.loads("".join(self._json_ld_chunks))
+        except json.JSONDecodeError:
+            return
+        self._collect_json_ld(document)
+
+    def _collect_json_ld(self, value):
+        if isinstance(value, list):
+            for item in value:
+                self._collect_json_ld(item)
+            return
+        if not isinstance(value, dict):
+            return
+        graph = value.get("@graph")
+        if graph is not None:
+            self._collect_json_ld(graph)
+        content_url = value.get("contentUrl")
+        if isinstance(content_url, str):
+            self.candidates.append(
+                (urljoin(self.page_url, content_url), None, "jsonld:contentUrl")
+            )
+
+
+def _validate_direct_video(
+    metadata: ResourceMetadata,
+    declared_mime: str | None = None,
+) -> ResolvedVideo | None:
+    """Return only media Gemini can fetch within its documented external limit."""
+
+    if metadata.content_type in SUPPORTED_VIDEO_MIME_TYPES:
+        mime_type = metadata.content_type
+    elif metadata.content_type in {"", "application/octet-stream"}:
+        mime_type = _normalized_content_type(declared_mime, metadata.final_url)
+    else:
+        return None
+    if mime_type not in SUPPORTED_VIDEO_MIME_TYPES:
+        return None
+    if (
+        metadata.content_length is not None
+        and metadata.content_length > MAX_EXTERNAL_VIDEO_BYTES
+    ):
+        raise VideoResolutionError("Video exceeds Gemini's 100 MB external URL limit.")
+    return ResolvedVideo(
+        uri=metadata.final_url,
+        mime_type=mime_type,
+        source="direct_video",
+    )
+
+
+def _is_native_youtube_video(url: str) -> bool:
+    """Identify public YouTube video shapes supported natively by Gemini."""
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").rstrip(".").lower()
+    path = [part for part in parsed.path.split("/") if part]
+    if host == "youtu.be":
+        return len(path) == 1 and bool(YOUTUBE_VIDEO_ID.fullmatch(path[0]))
+    if host not in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
+        return False
+    if parsed.path == "/watch":
+        video_ids = parse_qs(
+            parsed.query,
+            keep_blank_values=True,
+        ).get("v", [])
+        return len(video_ids) == 1 and bool(
+            YOUTUBE_VIDEO_ID.fullmatch(video_ids[0])
+        )
+    return (
+        len(path) == 2
+        and path[0] in {"shorts", "embed", "live"}
+        and bool(YOUTUBE_VIDEO_ID.fullmatch(path[1]))
+    )
 
 
 def resolve_video_url(
     url: str,
     *,
-    html_fetcher: Optional[Callable[[str], str]] = None,
-) -> str:
-    """Return a Gemini-readable URL without downloading video bytes."""
-    url = (url or "").strip()
-    if not url.startswith(("https://", "http://")):
-        raise VideoResolutionError("Video link is missing or is not an HTTP URL.")
+    metadata_fetcher: Callable[[str], ResourceMetadata] = _request_metadata,
+) -> ResolvedVideo:
+    """Resolve any standards-compliant public video link without video download."""
 
-    if "drive.google.com" in url:
-        file_id = extract_drive_file_id(url)
-        if not file_id:
-            raise VideoResolutionError("Could not extract a file ID from the Drive link.")
-        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    submitted_url = (url or "").strip()
+    _public_https_host(submitted_url)
+    if _is_native_youtube_video(submitted_url):
+        # Google's native YouTube input explicitly omits MIME.
+        return ResolvedVideo(submitted_url, None, "youtube")
 
-    if "loom.com/" in url:
-        parser = _OpenGraphVideoParser()
-        try:
-            parser.feed((html_fetcher or _fetch_html)(url))
-        except (OSError, ValueError) as exc:
-            raise VideoResolutionError(f"Could not read Loom page: {exc}") from exc
-        if not parser.video_url:
-            raise VideoResolutionError("Loom page did not expose a public video URL.")
-        return parser.video_url
+    page_or_media = metadata_fetcher(submitted_url)
+    direct = _validate_direct_video(page_or_media)
+    if direct is not None:
+        return direct
 
-    return url
+    if page_or_media.html:
+        parser = _VideoMetadataParser(page_or_media.final_url)
+        parser.feed(page_or_media.html)
+        # Declared video types and recognizable video paths are tried before
+        # generic page-configuration URLs to minimize outbound metadata probes.
+        candidates = sorted(
+            dict.fromkeys(parser.candidates),
+            key=lambda item: (
+                item[1] not in SUPPORTED_VIDEO_MIME_TYPES,
+                _normalized_content_type(item[1], item[0])
+                not in SUPPORTED_VIDEO_MIME_TYPES,
+            ),
+        )
+        for candidate_url, declared_mime, source in candidates[:30]:
+            try:
+                _public_https_host(candidate_url)
+                candidate_metadata = metadata_fetcher(candidate_url)
+            except (OSError, VideoResolutionError):
+                continue
+            candidate = _validate_direct_video(candidate_metadata, declared_mime)
+            if candidate is not None:
+                return ResolvedVideo(
+                    candidate.uri,
+                    candidate.mime_type,
+                    source,
+                )
+
+    # The analyst uses URL context to interpret non-standard or JS-rendered pages.
+    return ResolvedVideo(
+        uri=page_or_media.final_url,
+        mime_type=None,
+        source="webpage",
+        requires_url_context=True,
+    )
