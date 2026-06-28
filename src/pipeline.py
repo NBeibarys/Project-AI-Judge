@@ -157,11 +157,7 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
         sheet_name,
         config.top_label_row,
     )
-    col_map = resolve_output_columns(
-        top_label_header,
-        score_column_letter=config.ai_score_column,
-        reasoning_column_letter=config.ai_reasoning_column,
-    )
+    col_map = resolve_output_columns(top_label_header)
 
     row_id, result = process_row(
         config,
@@ -201,11 +197,7 @@ def run_batch(config: Config):
     # per-column header row `header` holds — fetch that row separately
     # rather than requiring a letter override for every sheet shaped this way.
     top_label_header = fetch_sheet_row(sheets_service, config.sheet_id, sheet_name, config.top_label_row)
-    col_map = resolve_output_columns(
-        top_label_header,
-        score_column_letter=config.ai_score_column,
-        reasoning_column_letter=config.ai_reasoning_column,
-    )
+    col_map = resolve_output_columns(top_label_header)
 
     results = {}
     errors = {}

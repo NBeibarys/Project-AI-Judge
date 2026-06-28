@@ -33,8 +33,10 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Configure the Gemini key, service-account file, Sheet ID, and sheet geometry in
-`.env`. Share the target Sheet with the service-account email as an editor.
+Configure the Gemini Developer API key and/or Vertex AI project alongside the
+service-account file, Sheet ID, and sheet geometry in `.env`. Select Vertex with
+`GOOGLE_GENAI_USE_VERTEXAI=TRUE`; otherwise the API-key backend remains active.
+Share the target Sheet with the service-account email as an editor.
 
 Run the checkpointed batch:
 

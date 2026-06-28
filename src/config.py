@@ -17,8 +17,6 @@ class Config:
     sheet_range: str
     header_row: int
     top_label_row: int
-    ai_score_column: str
-    ai_reasoning_column: str
     service_account_path: str
     analyzer_model: str
     grader_model: str
@@ -32,10 +30,19 @@ class Config:
 
         if not sheet_id:
             raise RuntimeError("FELLOWSHIP_SHEET_ID not set")
-        if not os.environ.get("GOOGLE_API_KEY"):
-            raise RuntimeError("GOOGLE_API_KEY not set")
         if not sa_path or not os.path.isfile(sa_path):
             raise RuntimeError(f"GOOGLE_SERVICE_ACCOUNT_PATH invalid: {sa_path}")
+        use_vertex = os.environ.get(
+            "GOOGLE_GENAI_USE_VERTEXAI",
+            "FALSE",
+        ).upper() == "TRUE"
+        if use_vertex:
+            if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
+                raise RuntimeError("GOOGLE_CLOUD_PROJECT not set for Vertex AI")
+            if not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+                raise RuntimeError("GOOGLE_CLOUD_LOCATION not set for Vertex AI")
+        elif not os.environ.get("GOOGLE_API_KEY"):
+            raise RuntimeError("GOOGLE_API_KEY not set for Gemini Developer API")
 
         return cls(
             sheet_id=sheet_id,
@@ -52,8 +59,6 @@ class Config:
             # separately and looks up the names there. Letter overrides
             # are only a fallback if a future sheet lacks those names.
             top_label_row=int(os.environ.get("FELLOWSHIP_TOP_LABEL_ROW", "1")),
-            ai_score_column=os.environ.get("AI_SCORE_COLUMN", ""),
-            ai_reasoning_column=os.environ.get("AI_REASONING_COLUMN", ""),
             service_account_path=sa_path,
             analyzer_model=os.environ.get("ANALYZER_MODEL", "gemini-3.5-flash"),
             grader_model=os.environ.get("GRADER_MODEL", "gemini-3.5-flash"),

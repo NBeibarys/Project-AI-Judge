@@ -95,8 +95,6 @@ def read_sheet_rows(sheets_service, sheet_id: str, sheet_range: str, header_row:
 
 def resolve_output_columns(
     header: list,
-    score_column_letter: Optional[str] = None,
-    reasoning_column_letter: Optional[str] = None,
     score_column_name: str = "AI",
     reasoning_column_name: str = "AI Reasoning",
 ) -> dict:
@@ -109,31 +107,19 @@ def resolve_output_columns(
     inserting new columns risks shifting everything and breaking those
     formulas. If the columns aren't where expected, fail loudly instead.
 
-    Explicit column-letter overrides exist because some sheets have a
-    merged top-label row (e.g. "AI") that doesn't appear in the actual
-    per-column header row read by read_sheet_rows — name lookup alone
-    can't find a column whose real header cell is blank.
+    The caller supplies the merged top-label row where these output names live,
+    so deployment-specific column letters are unnecessary.
     """
     col_map = {}
-    if score_column_letter:
-        col_map["score"] = _col_index(score_column_letter)
-    elif score_column_name in header:
+    if score_column_name in header:
         col_map["score"] = header.index(score_column_name)
     else:
-        raise RuntimeError(
-            f"Score column '{score_column_name}' not found in header and no "
-            "AI_SCORE_COLUMN override set."
-        )
+        raise RuntimeError(f"Score column '{score_column_name}' not found.")
 
-    if reasoning_column_letter:
-        col_map["reasoning"] = _col_index(reasoning_column_letter)
-    elif reasoning_column_name in header:
+    if reasoning_column_name in header:
         col_map["reasoning"] = header.index(reasoning_column_name)
     else:
-        raise RuntimeError(
-            f"Reasoning column '{reasoning_column_name}' not found in header and no "
-            "AI_REASONING_COLUMN override set."
-        )
+        raise RuntimeError(f"Reasoning column '{reasoning_column_name}' not found.")
     return col_map
 
 
@@ -178,20 +164,6 @@ def write_row_result(
             valueInputOption="RAW",
             body={"values": [[value]]},
         ).execute()
-
-
-def _col_index(col_letter: str) -> int:
-    """"A" -> 0, "U" -> 20. Inverse of _col_letter, needed for explicit
-    column-letter overrides (AI_SCORE_COLUMN=U in .env) since those come
-    in as letters but col_map elsewhere uses 0-indexed positions.
-    """
-    normalized = col_letter.strip().upper()
-    if not normalized or not normalized.isascii() or not normalized.isalpha():
-        raise ValueError(f"Invalid Google Sheets column: {col_letter!r}")
-    n = 0
-    for ch in normalized:
-        n = n * 26 + (ord(ch) - ord("A") + 1)
-    return n - 1
 
 
 def _col_letter(col_1_indexed: int) -> str:
