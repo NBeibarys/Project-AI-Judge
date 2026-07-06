@@ -252,7 +252,7 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
     return {"row_id": row_id, **result}
 
 
-def run_batch(config: Config):
+def run_batch(config: Config, force: bool = False):
     sheets_service = get_sheets_service(config.service_account_path)
     checkpoint = Checkpoint(config.checkpoint_path)
     workflow = _build_workflow(config)
@@ -292,7 +292,7 @@ def run_batch(config: Config):
         for i, row in enumerate(rows):
             sheet_row_number = i + config.header_row + 1 + offset  # header_row + sub-header skip + 1-indexing
             row_id_preview = _derive_row_id(header, row, sheet_row_number)
-            if checkpoint.is_done(row_id_preview):
+            if checkpoint.is_done(row_id_preview) and not force:
                 continue
             future = pool.submit(
                 process_row,
@@ -302,6 +302,7 @@ def run_batch(config: Config):
                 row,
                 sheet_row_number,
                 checkpoint,
+                force=force,
             )
             futures[future] = (row_id_preview, sheet_row_number)
 

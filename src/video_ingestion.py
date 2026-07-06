@@ -170,11 +170,10 @@ def _upload_to_gcs(local_path: str, service_account_path: str) -> tuple[str, str
     blob = bucket.blob(blob_name)
     blob.upload_from_filename(local_path)
 
-    # Detect actual MIME type from file content, not just extension
-    guessed_mime, _ = mimetypes.guess_type(local_path)
-    mime = guessed_mime or "video/mp4"
-
-    return f"gs://VIDEO_STAGING_BUCKET/{blob_name}", mime
+    # Always use video/mp4 - mimetypes.guess_type() misdetects video files
+    # as application/x-msdos-program when the extension is ambiguous.
+    # Gemini accepts video/mp4 for all common video formats.
+    return f"gs://VIDEO_STAGING_BUCKET/{blob_name}", "video/mp4"
 
 
 def _temp_video_path(url: str) -> str:
