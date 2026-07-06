@@ -216,7 +216,8 @@ For each criterion, tag as:
 Absence of evidence is NOT evidence of absence. Unverified does not mean false.
 It means the web did not confirm or deny.
 
-{FELLOWSHIP_V2_RUBRIC_TEXT}
+You do NOT score, do NOT judge quality, and do NOT see the rubric. You only
+fact-check objective claims and report what the web says.
 
 Output EXACTLY this JSON structure (no other format):
 
