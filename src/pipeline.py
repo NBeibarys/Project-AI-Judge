@@ -15,6 +15,10 @@ no need for asyncio's added complexity for what's mostly I/O-bound work
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
+
+from google.cloud import storage
+from google.oauth2 import service_account
 
 from .checkpoint import Checkpoint
 from .config import Config
@@ -26,7 +30,7 @@ from .google_clients import (
     resolve_output_columns,
     write_row_result,
 )
-from .video_urls import VideoResolutionError, resolve_video_url
+from .video_urls import ResolvedVideo, VideoResolutionError, resolve_video_url
 from .video_ingestion import ingest_pitch_deck, ingest_video_for_r2b
 
 # Header exclusion lists are program-specific — see ProgramConfig fields
@@ -104,6 +108,55 @@ def _submitted_video_url(header: list, row: list) -> str:
     return ""
 
 
+# Hosts that the Tier-1 resolver cannot fetch directly (Drive serves an HTML
+# interstitial or requires auth, so resolve_video_url returns a webpage with
+# requires_url_context=True). These must go through Tier-2 (Drive API download
+# → GCS upload) so the analyst receives the video as a native multimodal Part.
+_DRIVE_HOSTS = frozenset({"drive.google.com", "drive.usercontent.google.com"})
+
+
+def _is_drive_url(url: str) -> bool:
+    """Detect Google Drive links that require Tier-2 ingestion.
+
+    Tier-1 (resolve_video_url) cannot handle Drive: the link resolves to an
+    HTML interstitial or an auth-walled download endpoint, so Tier-1 returns
+    requires_url_context=True and the video Part is never created. Detecting
+    the host explicitly lets us short-circuit to Tier-2 without paying for a
+    metadata round-trip that we already know will not yield a fetchable URI.
+    """
+    host = (urlparse(url).hostname or "").lower().rstrip(".")
+    return host in _DRIVE_HOSTS
+
+
+def _cleanup_gcs_object(video_url: str, service_account_path: str) -> None:
+    """Delete a video uploaded to GCS by Tier-2 ingestion.
+
+    Tier-2 uploads videos to gs://VIDEO_STAGING_BUCKET/ so Vertex AI can
+    read them as file_data. Once grading is complete for the row the object
+    is no longer needed — deleting it avoids unbounded storage cost growth
+    across batches. This is best-effort: a delete failure is logged but does
+    not affect the grade already written to the sheet. Only gs:// URIs are
+    candidates; Files API (https://) URIs expire on their own.
+    """
+    if not video_url or not video_url.startswith("gs://"):
+        return
+    try:
+        creds = service_account.Credentials.from_service_account_file(
+            service_account_path,
+            scopes=["https://www.googleapis.com/auth/devstorage.read_write"],
+        )
+        client = storage.Client(credentials=creds)
+        parsed = urlparse(video_url)
+        bucket = client.bucket(parsed.netloc)
+        blob = bucket.blob(parsed.path.lstrip("/"))
+        blob.delete()
+    except Exception:
+        # Storage cleanup must never mask a successful grade. The grade is
+        # already written to the sheet at this point; a leaked object costs
+        # a few cents and can be swept by a bucket lifecycle rule instead.
+        pass
+
+
 def _submitted_pitch_deck_url(header: list, row: list) -> str:
     """Find the pitch deck link column. Matches headers containing
     'pitch deck' or 'presentation' (case-insensitive)."""
@@ -158,35 +211,55 @@ def process_row(
     submitted_video_url = _submitted_video_url(header, row)
     if submitted_video_url:
         initial_state["submitted_video_url"] = submitted_video_url
-        # R2B is video-primary: use the Tier-2 ingestion path that can
-        # download Drive/large files and upload them to the Files API.
-        # Fellowship stays on the Tier-1 resolver (YouTube + direct HTTPS
-        # ≤100MB), preserving its existing behavior exactly.
-        if config.program_config.source_priority == "video_primary":
+        # Video resolution is source_priority-agnostic so that Drive videos
+        # are ingested as native multimodal Parts for every program, not just
+        # R2B. The path is:
+        #   1. Tier-1 (resolve_video_url) — cheap, no download; covers
+        #      YouTube natively and direct HTTPS videos ≤100MB.
+        #   2. If Tier-1 returns requires_url_context=True OR the URL is a
+        #      Google Drive link, fall back to Tier-2 (ingest_video_for_r2b)
+        #      which downloads via the Drive API and uploads to GCS/Files API
+        #      so the analyst receives the video as a native Part.
+        #   3. If Tier-2 also fails, record video_error; the workflow surfaces
+        #      "VIDEO UNAVAILABLE: ..." to the analyst.
+        # This preserves R2B's existing behavior (it already used Tier-2)
+        # and fixes Fellowship V2, where Drive links previously resolved to a
+        # webpage the analyst could never actually watch.
+        resolved_video: ResolvedVideo | None = None
+        try:
+            resolved_video = resolve_video_url(submitted_video_url)
+        except VideoResolutionError as exc:
+            initial_state["video_error"] = str(exc)
+
+        needs_tier2 = (
+            resolved_video is None
+            or resolved_video.requires_url_context
+            or _is_drive_url(submitted_video_url)
+        )
+        if needs_tier2:
             try:
                 resolved_video = ingest_video_for_r2b(
                     submitted_video_url,
                     config.service_account_path,
                 )
-                initial_state["video_url"] = resolved_video.uri
-                initial_state["video_mime_type"] = resolved_video.mime_type
-                initial_state["video_source"] = resolved_video.source
-                initial_state["video_requires_url_context"] = (
-                    resolved_video.requires_url_context
-                )
             except VideoResolutionError as exc:
+                # Preserve the Tier-1 error when Tier-2 also fails so the
+                # analyst sees the most informative message.
                 initial_state["video_error"] = str(exc)
-        else:
-            try:
-                resolved_video = resolve_video_url(submitted_video_url)
-                initial_state["video_url"] = resolved_video.uri
-                initial_state["video_mime_type"] = resolved_video.mime_type
-                initial_state["video_source"] = resolved_video.source
-                initial_state["video_requires_url_context"] = (
-                    resolved_video.requires_url_context
-                )
-            except VideoResolutionError as exc:
-                initial_state["video_error"] = str(exc)
+                resolved_video = None
+
+        if resolved_video is not None:
+            initial_state["video_url"] = resolved_video.uri
+            initial_state["video_mime_type"] = resolved_video.mime_type
+            initial_state["video_source"] = resolved_video.source
+            initial_state["video_requires_url_context"] = (
+                resolved_video.requires_url_context
+            )
+            # Tier-2 succeeded: clear any stale error left by a Tier-1
+            # failure. Without this, the workflow would both build the video
+            # Part (video_url is set) AND append "VIDEO UNAVAILABLE: ..."
+            # (video_error is set) — a contradictory state for the analyst.
+            initial_state.pop("video_error", None)
 
     # R2B is video-primary and criterion 6 (Presentation & Clarity) requires
     # video evidence. The R2B prompts instruct the grader to score criterion 6
@@ -241,6 +314,16 @@ def process_row(
         # columns already).
         reasoning = f"[NEEDS HUMAN REVIEW] {reasoning}"
         score = ""
+
+    # Tier-2 ingestion uploads videos to GCS (gs://) for Vertex AI. The grade
+    # is now computed and written by the caller, so the staged object is no
+    # longer needed — delete it to avoid storage costs accumulating across
+    # batches. Best-effort: a failure here does not affect the grade. Only
+    # gs:// URIs are deleted; Files API (https://) URIs expire on their own.
+    _cleanup_gcs_object(
+        initial_state.get("video_url", ""),
+        config.service_account_path,
+    )
 
     # The caller owns completion because only it observes the Sheets commit.
     return row_id, {
