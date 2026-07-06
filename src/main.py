@@ -1,4 +1,5 @@
 """CLI entry point for the checkpointed ADK batch review."""
+import os
 import sys
 
 from dotenv import load_dotenv
@@ -10,8 +11,9 @@ from .pipeline import run_batch
 def main():
     # The maintained parser correctly handles quoting, escapes, and interpolation.
     load_dotenv(override=False)
-    config = Config.from_env()
-    print(f"Running ADK batch against sheet {config.sheet_id}")
+    program = os.environ.get("PROGRAM", "fellowship")
+    config = Config.from_env(program)
+    print(f"Running ADK batch [program={program}] against sheet {config.sheet_id}")
 
     result = run_batch(config)
     graded = result["graded"]

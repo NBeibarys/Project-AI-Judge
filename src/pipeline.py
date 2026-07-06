@@ -26,6 +26,7 @@ from .google_clients import (
     write_row_result,
 )
 from .video_urls import VideoResolutionError, resolve_video_url
+from .video_ingestion import ingest_video_for_r2b
 
 # Excluded from what the analyzer sees — output columns themselves (would
 # be circular), and human-given score columns. "ception" matches this
@@ -80,6 +81,21 @@ def _submitted_video_url(header: list, row: list) -> str:
     return ""
 
 
+def _build_workflow(config: Config) -> AdkReviewWorkflow:
+    """Construct the workflow with program-aware models and sample count.
+
+    Fellowship: single run (no multi-sample averaging).
+    R2B: verify loop once, then Head re-run n_samples times and averaged.
+    """
+    return AdkReviewWorkflow(
+        config.analyzer_model,
+        config.grader_model,
+        config.program_config,
+        head_model=config.head_model,
+        n_samples=config.n_samples,
+    )
+
+
 def process_row(
     config: Config,
     workflow,
@@ -102,16 +118,51 @@ def process_row(
     submitted_video_url = _submitted_video_url(header, row)
     if submitted_video_url:
         initial_state["submitted_video_url"] = submitted_video_url
-        try:
-            resolved_video = resolve_video_url(submitted_video_url)
-            initial_state["video_url"] = resolved_video.uri
-            initial_state["video_mime_type"] = resolved_video.mime_type
-            initial_state["video_source"] = resolved_video.source
-            initial_state["video_requires_url_context"] = (
-                resolved_video.requires_url_context
-            )
-        except VideoResolutionError as exc:
-            initial_state["video_error"] = str(exc)
+        # R2B is video-primary: use the Tier-2 ingestion path that can
+        # download Drive/large files and upload them to the Files API.
+        # Fellowship stays on the Tier-1 resolver (YouTube + direct HTTPS
+        # ≤100MB), preserving its existing behavior exactly.
+        if config.program_config.source_priority == "video_primary":
+            try:
+                resolved_video = ingest_video_for_r2b(
+                    submitted_video_url,
+                    config.service_account_path,
+                )
+                initial_state["video_url"] = resolved_video.uri
+                initial_state["video_mime_type"] = resolved_video.mime_type
+                initial_state["video_source"] = resolved_video.source
+                initial_state["video_requires_url_context"] = (
+                    resolved_video.requires_url_context
+                )
+            except VideoResolutionError as exc:
+                initial_state["video_error"] = str(exc)
+        else:
+            try:
+                resolved_video = resolve_video_url(submitted_video_url)
+                initial_state["video_url"] = resolved_video.uri
+                initial_state["video_mime_type"] = resolved_video.mime_type
+                initial_state["video_source"] = resolved_video.source
+                initial_state["video_requires_url_context"] = (
+                    resolved_video.requires_url_context
+                )
+            except VideoResolutionError as exc:
+                initial_state["video_error"] = str(exc)
+
+    # R2B is video-primary and criterion 6 (Presentation & Clarity) requires
+    # video evidence. The R2B prompts instruct the grader to score criterion 6
+    # as 1 with rationale "No video submitted" when no video is available.
+    # Make the no-video state unambiguous to the analyst by setting a
+    # video_error even when no URL was submitted at all — the workflow
+    # appends this to the analyst's text input as "VIDEO UNAVAILABLE: ...".
+    if (
+        config.program_config.source_priority == "video_primary"
+        and not initial_state.get("video_url")
+        and not initial_state.get("video_requires_url_context")
+    ):
+        initial_state.setdefault(
+            "video_error",
+            "No video URL submitted or video could not be resolved.",
+        )
 
     final_state = workflow.invoke(initial_state)
     final_result = final_state.get("final_result", {})
@@ -138,7 +189,7 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
     """Run the complete ADK workflow for one sheet row and write its result."""
     sheets_service = get_sheets_service(config.service_account_path)
     checkpoint = Checkpoint(config.checkpoint_path)
-    workflow = AdkReviewWorkflow(config.analyzer_model, config.grader_model)
+    workflow = _build_workflow(config)
 
     header, rows = read_sheet_rows(
         sheets_service,
@@ -157,7 +208,11 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
         sheet_name,
         config.top_label_row,
     )
-    col_map = resolve_output_columns(top_label_header)
+    col_map = resolve_output_columns(
+        top_label_header,
+        score_column_name=config.program_config.score_column_name,
+        reasoning_column_name=config.program_config.reasoning_column_name,
+    )
 
     row_id, result = process_row(
         config,
@@ -188,7 +243,7 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
 def run_batch(config: Config):
     sheets_service = get_sheets_service(config.service_account_path)
     checkpoint = Checkpoint(config.checkpoint_path)
-    workflow = AdkReviewWorkflow(config.analyzer_model, config.grader_model)
+    workflow = _build_workflow(config)
 
     header, rows = read_sheet_rows(sheets_service, config.sheet_id, config.sheet_range, config.header_row)
     sheet_name = config.sheet_range.split("!")[0]
@@ -197,7 +252,11 @@ def run_batch(config: Config):
     # per-column header row `header` holds — fetch that row separately
     # rather than requiring a letter override for every sheet shaped this way.
     top_label_header = fetch_sheet_row(sheets_service, config.sheet_id, sheet_name, config.top_label_row)
-    col_map = resolve_output_columns(top_label_header)
+    col_map = resolve_output_columns(
+        top_label_header,
+        score_column_name=config.program_config.score_column_name,
+        reasoning_column_name=config.program_config.reasoning_column_name,
+    )
 
     results = {}
     errors = {}
