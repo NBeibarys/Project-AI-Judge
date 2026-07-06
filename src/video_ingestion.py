@@ -28,7 +28,10 @@ operator should run R2B against the Developer API for full Drive support.
 import os
 import tempfile
 import time
+import uuid
 from typing import Optional
+
+from google.oauth2 import service_account
 
 from .google_clients import extract_drive_file_id
 from .video_urls import (
@@ -147,6 +150,27 @@ def _upload_to_gemini_files_api(
     raise VideoResolutionError("Gemini Files API upload timed out (5 min).")
 
 
+def _upload_to_gcs(local_path: str, service_account_path: str) -> tuple[str, str]:
+    """Upload a local video to Google Cloud Storage and return (gs:// URI, mime_type).
+
+    Vertex AI reads gs:// URIs directly - no Files API needed. The video is
+    uploaded to the VIDEO_STAGING_BUCKET bucket with a unique name and
+    the gs:// URI is returned for passing to Gemini via Part.from_uri.
+    """
+    from google.cloud import storage
+
+    creds = service_account.Credentials.from_service_account_file(
+        service_account_path,
+        scopes=["https://www.googleapis.com/auth/devstorage.read_write"],
+    )
+    client = storage.Client(credentials=creds)
+    bucket = client.bucket("VIDEO_STAGING_BUCKET")
+    blob_name = f"videos/{uuid.uuid4().hex}.mp4"
+    blob = bucket.blob(blob_name)
+    blob.upload_from_filename(local_path)
+    return f"gs://VIDEO_STAGING_BUCKET/{blob_name}", "video/mp4"
+
+
 def _temp_video_path(url: str) -> str:
     """Allocate a temp path with a best-effort extension from the URL."""
     ext = ""
@@ -184,21 +208,20 @@ def ingest_video_for_r2b(
     resolved: Optional[ResolvedVideo] = None
     try:
         resolved = resolve_video_url(submitted_url)
-        if not resolved.requires_url_context:
+        # If Tier-1 resolved to a YouTube URL, use it directly.
+        # If it resolved to a Drive/download URL, we need to download and
+        # upload to GCS (Vertex AI can't fetch these URLs directly).
+        if not resolved.requires_url_context and "youtube" not in resolved.uri and "youtu.be" not in resolved.uri:
+            # Non-YouTube URL that Tier-1 thinks is directly fetchable.
+            # On Vertex AI, these often fail (robots.txt, Drive auth).
+            # Force download + GCS upload for reliability.
+            pass
+        elif not resolved.requires_url_context:
             return resolved
     except VideoResolutionError:
         resolved = None
 
-    # Tier 2 needs the Files API, which is Developer-API-only.
-    if _is_vertex_backend():
-        if resolved is not None and resolved.requires_url_context:
-            return resolved
-        raise VideoResolutionError(
-            "Video could not be resolved via Tier-1 and the Files API "
-            "upload path is unavailable on Vertex AI."
-        )
-
-    # Tier 2: Google Drive share link.
+    # Tier 2 needs the Files API or GCS. On Vertex AI, use GCS upload.
     drive_id = extract_drive_file_id(submitted_url)
     if drive_id:
         tmp_path = _temp_video_path(submitted_url)
@@ -207,15 +230,19 @@ def ingest_video_for_r2b(
             _download_drive_file(service, drive_id, tmp_path)
             if os.path.getsize(tmp_path) > FILES_API_MAX_BYTES:
                 raise VideoResolutionError(
-                    "Drive video exceeds the 2GB Gemini Files API ceiling."
+                    "Drive video exceeds the 2GB size limit."
                 )
-            uri = _upload_to_gemini_files_api(tmp_path, mime_type=None)
-            return ResolvedVideo(uri=uri, mime_type=None, source="drive_files_api")
+            if _is_vertex_backend():
+                uri, mime = _upload_to_gcs(tmp_path, service_account_path)
+                return ResolvedVideo(uri=uri, mime_type=mime, source="drive_upload")
+            else:
+                uri = _upload_to_gemini_files_api(tmp_path, mime_type=None)
+                return ResolvedVideo(uri=uri, mime_type=None, source="drive_upload")
         except VideoResolutionError:
             raise
         except Exception as exc:
             raise VideoResolutionError(
-                f"Drive video download failed: {type(exc).__name__}"
+                f"Drive video download failed: {type(exc).__name__}: {exc}"
             ) from exc
         finally:
             try:
@@ -228,8 +255,12 @@ def ingest_video_for_r2b(
         tmp_path = _temp_video_path(submitted_url)
         try:
             _download_https(resolved.uri, tmp_path)
-            uri = _upload_to_gemini_files_api(tmp_path, mime_type=None)
-            return ResolvedVideo(uri=uri, mime_type=None, source="https_files_api")
+            if _is_vertex_backend():
+                uri, mime = _upload_to_gcs(tmp_path, service_account_path)
+                return ResolvedVideo(uri=uri, mime_type=mime, source="https_upload")
+            else:
+                uri = _upload_to_gemini_files_api(tmp_path, mime_type=None)
+                return ResolvedVideo(uri=uri, mime_type=None, source="https_upload")
         except VideoResolutionError:
             raise
         except Exception as exc:

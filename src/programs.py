@@ -119,7 +119,7 @@ FELLOWSHIP_V2_CONFIG = ProgramConfig(
     rubric_text=FELLOWSHIP_V2_RUBRIC_TEXT,
     analyst_instruction=FELLOWSHIP_V2_ANALYST_INSTRUCTION,
     grader_instruction=FELLOWSHIP_V2_GRADER_INSTRUCTION,
-    source_priority="text_primary",
+    source_priority="video_primary",
     uses_separate_head=True,
     head_instruction=FELLOWSHIP_V2_HEAD_INSTRUCTION,
     sheet_id_env="FELLOWSHIP_V2_SHEET_ID",
@@ -128,15 +128,14 @@ FELLOWSHIP_V2_CONFIG = ProgramConfig(
     top_label_row_env="FELLOWSHIP_V2_TOP_LABEL_ROW",
     score_column_name="AI",
     reasoning_column_name="AI_Reasoning",
-    # Fellowship V2 sheet: row 1 = column names, row 2 = sub-headers (ignored),
-    # row 3+ = data. header_row=1 so column-name lookups use row 1;
-    # top_label_row=0 means no separate merged label row — output columns are
-    # resolved from the header row itself (the per-column names on row 1).
-    # data_start_offset=1 skips the sub-header row 2 so real data starts at
-    # row 3.
-    default_header_row=1,
-    default_top_label_row=0,
-    data_start_offset=1,
+    # Fellowship V2 sheet: row 1 = reviewer names (AI, AI_Reasoning, Total),
+    # row 2 = actual column headers (question text), row 3+ = applicant data.
+    # header_row=2 so column names come from row 2.
+    # top_label_row=1 so output column lookup finds AI/AI_Reasoning on row 1.
+    # data_start_offset=0 because data starts immediately after header row 2.
+    default_header_row=2,
+    default_top_label_row=1,
+    data_start_offset=0,
 )
 
 
