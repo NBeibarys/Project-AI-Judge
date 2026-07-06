@@ -341,7 +341,7 @@ class AdkReviewWorkflow:
                 avg_criterion_scores[criterion] = round(sum(vals) / len(vals), 2)
 
         avg_final = round(
-            sum(avg_criterion_scores.values()) / len(avg_criterion_scores), 2
+            sum(avg_criterion_scores.values()) / len(avg_criterion_scores)
         )
 
         # Closest-rationale selection: pick the run whose final_score is
