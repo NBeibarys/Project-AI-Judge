@@ -9,7 +9,7 @@
 3. **Product/MVP & Innovation** — development stage; innovation/differentiation from competitors
 4. **Team Strength** — experience, skills, cohesion; balance of technical/business/leadership
 5. **Business Model** — revenue clarity, feasibility; monetization path and unit economics
-6. **Presentation & Clarity** — VIDEO-DEPENDENT: pitch delivery, structure, storytelling, persuasion
+6. **Presentation & Clarity** — pitch delivery, structure, storytelling, persuasion
 
 ## Scoring bands (per criterion)
 
@@ -21,6 +21,7 @@
 
 - Score 1-10 per criterion using band-then-integer method
 - Final score = average of 6 criterion scores
-- Criterion 6 (Presentation & Clarity) REQUIRES video evidence. If no video, score 1 with rationale "No video submitted."
+- VIDEO IS THE PRIMARY SOURCE FOR ALL CRITERIA. All evidence comes from the pitch video.
+- If no video is available, score ALL criteria as 1 with rationale "No video submitted."
 - Each level up requires MORE EVIDENCE, not just "better quality"
 - Write rationale BEFORE score

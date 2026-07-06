@@ -70,18 +70,19 @@ BUSINESS MODEL
 - 4-6: Revenue logic is present and somewhat feasible but needs refinement; pricing or channels are vague or unvalidated.
 - 7-10: Clear, well-thought-out model with a strong, validated monetization plan, realistic unit economics, and a credible scaling path.
 
-PRESENTATION & CLARITY (VIDEO-DEPENDENT)
+PRESENTATION & CLARITY
 (Overall clarity, structure, and delivery of the pitch; how well the startup communicates its value proposition and tells a compelling story)
 - 1-3: Poor structure and delivery; the pitch is hard to follow, lacks focus, or fails to communicate the value proposition. Score 1 if no video was submitted.
 - 4-6: Understandable pitch but lacks engagement or polish; structure is adequate but storytelling is weak or key points are underdeveloped.
 - 7-10: Clear, confident, and persuasive presentation with strong storytelling, a logical flow, and a compelling value proposition communicated effectively.
 
 SCORING INSTRUCTIONS:
+- VIDEO IS THE PRIMARY SOURCE FOR ALL CRITERIA. All evidence should come from the pitch video.
 - For each criterion, first pick a BAND (1-3, 4-6, 7-10), then pick the exact integer within that band.
 - Write your rationale BEFORE the score. Rationale must explain what evidence was found (or missing).
 - Each level up requires MORE EVIDENCE, not just "better quality." The question is always: "What additional proof has been provided?"
 - Final score = average of 6 criterion scores.
-- Criterion 6 (Presentation & Clarity) REQUIRES VIDEO evidence. If no video is available, score criterion 6 as 1 with rationale "No video submitted."
+- If no video is available, score ALL criteria as 1 with rationale "No video submitted."
 - You may adjust the final score by +1.0 or -1.0 if you provide written reasoning for the adjustment.
 """.strip()
 
@@ -171,10 +172,7 @@ product demonstrations, team presentation, delivery quality, and storytelling.
 For each rubric criterion, extract concrete evidence — quote or closely
 paraphrase; never invent unsupported claims.
 
-For criterion 6 (Presentation & Clarity), you MUST describe delivery evidence
-from the video: pitch structure, clarity, persuasion, and storytelling. If no
-video is available, state explicitly that no video was submitted so the grader
-can flag it.
+For criterion 6 (Presentation & Clarity), describe the delivery: pitch structure, clarity, persuasion, and storytelling. If no video is available, state explicitly that no video was submitted so the grader can flag it.
 
 {R2B_RUBRIC_TEXT}
 
@@ -195,8 +193,7 @@ text. Check that:
 1. Every piece of evidence is real and grounded in the sources (not fabricated
    or exaggerated).
 2. All 6 criteria are covered by evidence.
-3. Criterion 6 (Presentation & Clarity) has VIDEO evidence. If no video evidence
-   exists for criterion 6, set approved=false and flag it in your feedback.
+3. All evidence comes from the pitch video (video is the primary source for all criteria). If no video exists at all, set approved=false and flag it in your feedback.
 
 If any evidence is unreliable, incomplete, or missing, set approved=false and
 give exact, actionable correction instructions in feedback so the analyst can
@@ -232,8 +229,7 @@ VERBOSITY GUARD:
   verbosity of the pitch. A short, clear, well-structured pitch can score 7-10;
   a long, rambling one does not deserve a high score for length alone.
 
-Criterion 6 (Presentation & Clarity) REQUIRES VIDEO evidence. If no video is
-available, score criterion 6 as 1 with rationale "No video submitted."
+Criterion 6 (Presentation & Clarity) evaluates the pitch delivery itself. If no video is available, score ALL criteria as 1 with rationale "No video submitted."
 
 Final score = average of the 6 criterion scores. You may adjust the final score
 by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
