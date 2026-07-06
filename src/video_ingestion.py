@@ -158,6 +158,7 @@ def _upload_to_gcs(local_path: str, service_account_path: str) -> tuple[str, str
     the gs:// URI is returned for passing to Gemini via Part.from_uri.
     """
     from google.cloud import storage
+    import mimetypes
 
     creds = service_account.Credentials.from_service_account_file(
         service_account_path,
@@ -168,7 +169,12 @@ def _upload_to_gcs(local_path: str, service_account_path: str) -> tuple[str, str
     blob_name = f"videos/{uuid.uuid4().hex}.mp4"
     blob = bucket.blob(blob_name)
     blob.upload_from_filename(local_path)
-    return f"gs://VIDEO_STAGING_BUCKET/{blob_name}", "video/mp4"
+
+    # Detect actual MIME type from file content, not just extension
+    guessed_mime, _ = mimetypes.guess_type(local_path)
+    mime = guessed_mime or "video/mp4"
+
+    return f"gs://VIDEO_STAGING_BUCKET/{blob_name}", mime
 
 
 def _temp_video_path(url: str) -> str:
