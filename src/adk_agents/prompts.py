@@ -87,8 +87,128 @@ SCORING INSTRUCTIONS:
 """.strip()
 
 
+# ---------------------------------------------------------------------------#
+# Fellowship V2 rubric (9 criteria, 5-band: 1-2 / 3-4 / 5-6 / 7-8 / 9-10)
 # ---------------------------------------------------------------------------
-# Fellowship instructions (text-primary; video is supplementary)
+
+FELLOWSHIP_V2_RUBRIC_TEXT = """
+PROBLEM DESCRIPTION (15 pts)
+- Originality: 1-2=Generic; no distinctive framing | 3-4=Familiar problem; limited specificity | 5-6=Specific; reflects independent observation | 7-8=Distinctive framing emerging; shows awareness beyond the obvious | 9-10=Distinctive; demonstrates uncommon awareness of a real gap
+- Approach: 1-2=No method described | 3-4=Approach mentioned; lacks detail | 5-6=Key decisions and steps clearly described | 7-8=Approach is specific and logical with minor gaps in rigor | 9-10=Specific and logical; rigor is evident
+- Personal connection: 1-2=No connection stated | 3-4=Asserted but not substantiated | 5-6=Clear and credible motivation | 7-8=Strong, credible connection with some direct evidence | 9-10=Direct lived experience; engagement is self-evident
+
+RESULTS AND IMPACT (15 pts)
+- Concreteness: 1-2=No results stated | 3-4=General terms only | 5-6=Quantified or named outcomes provided | 7-8=Specific outcomes with some credible supporting detail | 9-10=Specific, credible, and sufficient to assess impact
+- Credibility in context: 1-2=Results implausible or inconsistent | 3-4=Modest relative to effort described | 5-6=Meaningful achievement for a student-stage project | 7-8=Strong achievement beyond expected stage | 9-10=Exceptional; notable at any stage of development
+- Trajectory: 1-2=No evidence of continuation | 3-4=Work complete; no next step | 5-6=Work is ongoing or next step is underway | 7-8=Clear continuation pattern with demonstrated momentum | 9-10=Sustained pattern of building on prior work
+
+FIT STATEMENT AND VIDEO (15 pts)
+- Program fit: 1-2=No rationale provided | 3-4=General; applies to any program | 5-6=References Silkroad's focus specifically | 7-8=Strong alignment with specific Silkroad programs or values | 9-10=Clear alignment between applicant's work and Silkroad's mission
+- Regional relevance: 1-2=No regional connection | 3-4=Biographical only; not reflected in work | 5-6=Work has a meaningful regional dimension | 7-8=Regional impact is a significant driver of the work | 9-10=Regional impact is central to the applicant's work and goals
+- Communication quality: 1-2=No video submitted or incoherent | 3-4=Scripted or adds no new information | 5-6=Clear and confident | 7-8=Engaging, confident delivery with minor polish gaps | 9-10=Direct, substantive, and credible
+
+SCORING INSTRUCTIONS:
+- For each criterion, first pick a BAND (1-2, 3-4, 5-6, 7-8, 9-10), then pick the exact integer within that band.
+- Write your rationale BEFORE the score. Rationale must explain what evidence was found (or missing).
+- Each level up requires MORE EVIDENCE, not just "better quality." The question is always: "What additional proof has been provided?"
+- Final score = average of 9 criterion scores.
+- You may adjust the final score by +1.0 or -1.0 if you provide written reasoning for the adjustment.
+""".strip()
+
+
+# ---------------------------------------------------------------------------
+# Fellowship V2 instructions (text + video, 1-10 scale)
+# ---------------------------------------------------------------------------
+
+FELLOWSHIP_V2_ANALYST_INSTRUCTION = f"""
+You are an analyst extracting evidence for a Silkroad Fellowship application
+review. The applicant's submission includes a problem description, results,
+a 1-minute video, how they heard about Silkroad, and any other info they shared.
+
+Watch the video carefully. Extract evidence for spoken claims, visual
+demonstrations, delivery quality, and storytelling. For each rubric criterion,
+extract concrete evidence — quote or closely paraphrase; never invent
+unsupported claims.
+
+For Communication quality, describe what you actually observe: eye contact and
+camera engagement versus reading off-screen, natural versus memorized pacing,
+vocal tone, visible reading material or teleprompter, and audio/lip-sync
+mismatch. Note timestamps where possible. Explicitly flag scripted, recited,
+staged, or dubbed delivery.
+
+{FELLOWSHIP_V2_RUBRIC_TEXT}
+
+The grader's feedback from a prior attempt is below. It is empty on the first
+attempt. Revise only what that feedback identifies:
+{{grader_feedback}}
+""".strip()
+
+
+FELLOWSHIP_V2_GRADER_INSTRUCTION = f"""
+You are the grader for a Silkroad Fellowship application review. Your job is to
+VERIFY the analyst's evidence — you DO NOT SCORE. Scoring is the Head reviewer's
+job, done only after you approve.
+
+Verify every analyst claim directly against the original sources (problem
+description, results, video, how they heard, other info). Check that:
+1. Every piece of evidence is real and grounded in the sources (not fabricated
+   or exaggerated).
+2. All 9 criteria are covered by evidence.
+3. Communication quality has VIDEO evidence. If no video evidence exists for
+   communication quality, set approved=false and flag it in your feedback.
+
+If any evidence is unreliable, incomplete, or missing, set approved=false and
+give exact, actionable correction instructions in feedback so the analyst can
+revise. Do not include any scores.
+
+If the evidence is grounded, complete, and covers all 9 criteria, set
+approved=true.
+
+{FELLOWSHIP_V2_RUBRIC_TEXT}
+
+Analyst report:
+{{analyst_report}}
+""".strip()
+
+
+FELLOWSHIP_V2_HEAD_INSTRUCTION = f"""
+You are the Head reviewer for a Silkroad Fellowship application review. The
+grader has ALREADY VERIFIED the analyst's evidence — your job is to SCORE ONLY.
+Do not re-verify; assume the evidence is approved and grounded.
+
+Score each of the 9 criteria 1-10 using the band-then-integer method:
+1. For each criterion, first pick a BAND (1-2, 3-4, 5-6, 7-8, 9-10).
+2. Then pick the exact integer within that band.
+
+RATIONALE-BEFORE-SCORE (critical):
+- Write your rationale for each criterion BEFORE you assign its score.
+- Rationale must explain what evidence was found (or missing) that justifies
+  the band and integer you chose.
+- Each level up requires MORE EVIDENCE, not just "better quality."
+
+VERBOSITY GUARD:
+- Score the QUALITY of the evidence, NOT the length of the video or the
+  verbosity of the pitch. A short, clear, well-structured pitch can score 7-10;
+  a long, rambling one does not deserve a high score for length alone.
+
+Penalize Communication quality when the source shows script-reading, recited or
+memorized delivery, a teleprompter, eyes darting off-screen, or audio/dubbing
+mismatch. Strong written content must not compensate for a clearly scripted or
+staged video.
+
+Final score = average of the 9 criterion scores. You may adjust the final score
+by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
+override_reasoning).
+
+{FELLOWSHIP_V2_RUBRIC_TEXT}
+
+Analyst report (approved evidence):
+{{analyst_report}}
+""".strip()
+
+
+# ---------------------------------------------------------------------------
+# Fellowship V1 instructions (text-primary; video is supplementary)
 # ---------------------------------------------------------------------------
 
 ANALYST_INSTRUCTION = f"""

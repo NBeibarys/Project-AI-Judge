@@ -197,17 +197,29 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
         config.sheet_range,
         config.header_row,
     )
+    # Skip non-data rows that sit between the header and the first applicant
+    # row (e.g. Fellowship V2's sub-header row 2). data_start_offset is 0 for
+    # Fellowship/R2B (data starts right after the header), so this is a no-op
+    # for them and preserves their existing behavior exactly.
+    offset = config.program_config.data_start_offset
+    rows = rows[offset:]
     if row_index < 0 or row_index >= len(rows):
         raise IndexError(f"Applicant row index {row_index} is out of range for {len(rows)} rows.")
 
     sheet_name = config.sheet_range.split("!")[0]
-    sheet_row_number = config.header_row + row_index + 1
-    top_label_header = fetch_sheet_row(
-        sheets_service,
-        config.sheet_id,
-        sheet_name,
-        config.top_label_row,
-    )
+    sheet_row_number = config.header_row + row_index + 1 + offset
+    # When there is no separate merged top-label row (top_label_row=0, as on
+    # the Fellowship V2 sheet), output columns live on the header row itself —
+    # resolve them from `header` instead of fetching a nonexistent row 0.
+    if config.top_label_row > 0:
+        top_label_header = fetch_sheet_row(
+            sheets_service,
+            config.sheet_id,
+            sheet_name,
+            config.top_label_row,
+        )
+    else:
+        top_label_header = header
     col_map = resolve_output_columns(
         top_label_header,
         score_column_name=config.program_config.score_column_name,
@@ -248,10 +260,21 @@ def run_batch(config: Config):
     header, rows = read_sheet_rows(sheets_service, config.sheet_id, config.sheet_range, config.header_row)
     sheet_name = config.sheet_range.split("!")[0]
 
+    # Skip non-data rows between the header and the first applicant row
+    # (Fellowship V2's sub-header row 2). No-op for Fellowship/R2B where
+    # data_start_offset=0.
+    offset = config.program_config.data_start_offset
+    rows = rows[offset:]
+
     # "AI" / "AI Reasoning" are named on the merged TOP label row, not the
     # per-column header row `header` holds — fetch that row separately
     # rather than requiring a letter override for every sheet shaped this way.
-    top_label_header = fetch_sheet_row(sheets_service, config.sheet_id, sheet_name, config.top_label_row)
+    # When there is no separate label row (top_label_row=0, Fellowship V2),
+    # output columns live on the header row itself.
+    if config.top_label_row > 0:
+        top_label_header = fetch_sheet_row(sheets_service, config.sheet_id, sheet_name, config.top_label_row)
+    else:
+        top_label_header = header
     col_map = resolve_output_columns(
         top_label_header,
         score_column_name=config.program_config.score_column_name,
@@ -267,7 +290,7 @@ def run_batch(config: Config):
     with ThreadPoolExecutor(max_workers=config.max_concurrency) as pool:
         futures = {}
         for i, row in enumerate(rows):
-            sheet_row_number = i + config.header_row + 1  # header_row itself, then 1-indexing
+            sheet_row_number = i + config.header_row + 1 + offset  # header_row + sub-header skip + 1-indexing
             row_id_preview = _derive_row_id(header, row, sheet_row_number)
             if checkpoint.is_done(row_id_preview):
                 continue

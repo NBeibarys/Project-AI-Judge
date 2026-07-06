@@ -23,6 +23,10 @@ from typing import Literal
 from .adk_agents.prompts import (
     ANALYST_INSTRUCTION,
     GRADER_HEAD_INSTRUCTION,
+    FELLOWSHIP_V2_ANALYST_INSTRUCTION,
+    FELLOWSHIP_V2_GRADER_INSTRUCTION,
+    FELLOWSHIP_V2_HEAD_INSTRUCTION,
+    FELLOWSHIP_V2_RUBRIC_TEXT,
     R2B_ANALYST_INSTRUCTION,
     R2B_GRADER_INSTRUCTION,
     R2B_HEAD_INSTRUCTION,
@@ -37,7 +41,7 @@ from .adk_agents.schemas import (
     set_active_criteria,
 )
 
-ProgramName = Literal["fellowship", "r2b"]
+ProgramName = Literal["fellowship", "fellowship_v2", "r2b"]
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,18 @@ class ProgramConfig:
     reasoning_column_name: str
     # Head scorer instruction (only used when uses_separate_head=True).
     head_instruction: str = ""
+    # Per-program sheet-geometry defaults, used by Config.from_env when the
+    # corresponding env var is unset. Fellowship and R2B sheets have a merged
+    # top-label row above the per-column header row (header_row=2,
+    # top_label_row=1). Fellowship V2's sheet has column names on row 1 and
+    # sub-headers on row 2 (header_row=1, top_label_row=0 — no separate label
+    # row, so output columns are resolved from the header row itself).
+    default_header_row: int = 2
+    default_top_label_row: int = 1
+    # Number of rows AFTER the header row to skip before real data begins.
+    # Fellowship/R2B: 0 (data starts immediately after the header row).
+    # Fellowship V2: 1 (row 2 is a sub-header row; real data starts at row 3).
+    data_start_offset: int = 0
 
     def apply_active_criteria(self) -> None:
         """Set the module-level active criteria the Pydantic validators read.
@@ -94,6 +110,36 @@ FELLOWSHIP_CONFIG = ProgramConfig(
 )
 
 
+# --- Fellowship V2 (9 criteria, 5-band 1-10, new sheet) --------------------
+
+FELLOWSHIP_V2_CONFIG = ProgramConfig(
+    program="fellowship_v2",
+    rubric_criteria=RUBRIC_CRITERIA,
+    rubric_weights=RUBRIC_WEIGHTS,
+    rubric_text=FELLOWSHIP_V2_RUBRIC_TEXT,
+    analyst_instruction=FELLOWSHIP_V2_ANALYST_INSTRUCTION,
+    grader_instruction=FELLOWSHIP_V2_GRADER_INSTRUCTION,
+    source_priority="text_primary",
+    uses_separate_head=True,
+    head_instruction=FELLOWSHIP_V2_HEAD_INSTRUCTION,
+    sheet_id_env="FELLOWSHIP_V2_SHEET_ID",
+    sheet_range_env="FELLOWSHIP_V2_SHEET_RANGE",
+    header_row_env="FELLOWSHIP_V2_HEADER_ROW",
+    top_label_row_env="FELLOWSHIP_V2_TOP_LABEL_ROW",
+    score_column_name="AI",
+    reasoning_column_name="AI_Reasoning",
+    # Fellowship V2 sheet: row 1 = column names, row 2 = sub-headers (ignored),
+    # row 3+ = data. header_row=1 so column-name lookups use row 1;
+    # top_label_row=0 means no separate merged label row — output columns are
+    # resolved from the header row itself (the per-column names on row 1).
+    # data_start_offset=1 skips the sub-header row 2 so real data starts at
+    # row 3.
+    default_header_row=1,
+    default_top_label_row=0,
+    data_start_offset=1,
+)
+
+
 # --- R2B (6 criteria, 3-band, video-primary, 3 distinct roles) --------------
 
 R2B_CONFIG = ProgramConfig(
@@ -116,6 +162,7 @@ R2B_CONFIG = ProgramConfig(
 
 _PROGRAMS: dict[str, ProgramConfig] = {
     "fellowship": FELLOWSHIP_CONFIG,
+    "fellowship_v2": FELLOWSHIP_V2_CONFIG,
     "r2b": R2B_CONFIG,
 }
 

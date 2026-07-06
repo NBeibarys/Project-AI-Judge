@@ -64,8 +64,12 @@ class Config:
             sheet_range=os.environ.get(
                 program_config.sheet_range_env, "Grading Final",
             ),
-            header_row=int(os.environ.get(program_config.header_row_env, "2")),
-            top_label_row=int(os.environ.get(program_config.top_label_row_env, "1")),
+            header_row=int(os.environ.get(
+                program_config.header_row_env, str(program_config.default_header_row),
+            )),
+            top_label_row=int(os.environ.get(
+                program_config.top_label_row_env, str(program_config.default_top_label_row),
+            )),
             service_account_path=sa_path,
             analyzer_model=os.environ.get("ANALYZER_MODEL", "gemini-3.5-flash"),
             grader_model=os.environ.get("GRADER_MODEL", "gemini-3.5-flash"),

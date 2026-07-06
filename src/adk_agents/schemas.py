@@ -173,12 +173,17 @@ class R2BGraderVerdict(BaseModel):
 
 
 class R2BHeadScore(BaseModel):
-    """The R2B head SCORES ONLY — it does not verify.
+    """The Head scorer SCORES ONLY — it does not verify.
 
     Scores approved evidence 1-10 per criterion using the band-then-integer
     method. Writes rationale BEFORE score (rationale-before-score CoT). Final
-    score = average of 6 criterion scores. A minor ±1 adjustment is allowed
+    score = average of criterion scores. A minor ±1 adjustment is allowed
     with reasoning. Confidence reflects evidence quality, not video length.
+
+    Used by any program with uses_separate_head=True (R2B with 6 criteria,
+    Fellowship V2 with 9 criteria). The validator reads the active-criteria
+    slot via get_active_criteria() so the same schema enforces the right set
+    regardless of program.
     """
     model_config = ConfigDict(extra="forbid")
     criterion_scores: dict[str, int]
@@ -190,11 +195,11 @@ class R2BHeadScore(BaseModel):
 
     @model_validator(mode="after")
     def enforce_score_contract(self) -> "R2BHeadScore":
-        active = set(RUBRIC_CRITERIA_R2B)
+        active = set(get_active_criteria())
         supplied_scores = set(self.criterion_scores)
         if supplied_scores != active:
             raise ValueError(
-                "criterion_scores must match the R2B rubric; "
+                "criterion_scores must match the active rubric; "
                 f"missing={sorted(active - supplied_scores)}, "
                 f"unexpected={sorted(supplied_scores - active)}"
             )
@@ -206,7 +211,7 @@ class R2BHeadScore(BaseModel):
         supplied_rationale = set(self.criterion_rationale)
         if supplied_rationale != active:
             raise ValueError(
-                "criterion_rationale must match the R2B rubric; "
+                "criterion_rationale must match the active rubric; "
                 f"missing={sorted(active - supplied_rationale)}, "
                 f"unexpected={sorted(supplied_rationale - active)}"
             )
