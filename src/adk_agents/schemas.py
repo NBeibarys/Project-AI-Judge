@@ -100,6 +100,14 @@ class CriterionEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
     evidence: str = Field(min_length=1)
     notes: str = Field(min_length=1)
+    # Web verification tag (Fellowship V2 + Alchemist analysts only).
+    # The analyst searches the web to verify key claims and tags each
+    # piece of evidence. 'verified' = web evidence found supporting the
+    # claim; 'unverified' = no web evidence found (DO NOT penalize —
+    # absence of evidence is not evidence of absence); 'contradicted' =
+    # web evidence contradicts the claim (flag for grader). The Head
+    # scorer does not use this field.
+    verification: Optional[Literal["verified", "unverified", "contradicted"]] = None
 
 
 class FellowshipV2AnalystReport(BaseModel):

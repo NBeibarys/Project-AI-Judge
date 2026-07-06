@@ -136,6 +136,21 @@ vocal tone, visible reading material or teleprompter, and audio/lip-sync
 mismatch. Note timestamps where possible. Explicitly flag scripted, recited,
 staged, or dubbed delivery.
 
+WEB RESEARCH (claim verification):
+After extracting evidence, search the web to verify key claims the applicant
+makes — competition wins, revenue numbers, company names, GitHub repos,
+published work, awards, or other verifiable assertions. Use the google_search
+tool for each claim worth verifying. Tag each piece of evidence with a
+verification status in the "verification" field:
+- "verified": web search found supporting evidence for the claim
+- "unverified": web search found no evidence (DO NOT penalize — absence of
+  evidence is NOT evidence of absence; the claim may simply not be indexed)
+- "contradicted": web search found evidence that contradicts the claim (flag
+  this for the grader to review)
+Only tag evidence as "contradicted" if you found clear, specific contradictory
+evidence — not merely because you couldn't find confirmation. When in doubt,
+leave verification unset or mark "unverified".
+
 {FELLOWSHIP_V2_RUBRIC_TEXT}
 
 You DO NOT SCORE. You only extract evidence. Do not assign numbers or evaluate
@@ -147,39 +162,48 @@ Output EXACTLY this JSON structure (no other format):
   "criteria": {{
     "Originality": {{
       "evidence": "What the applicant said/did related to originality of the problem",
-      "notes": "Additional context or observations"
+      "notes": "Additional context or observations",
+      "verification": "verified|unverified|contradicted"
     }},
     "Approach": {{
       "evidence": "What the applicant said/did related to their approach/method",
-      "notes": "Additional context or observations"
+      "notes": "Additional context or observations",
+      "verification": "verified|unverified|contradicted"
     }},
     "Personal connection": {{
       "evidence": "What the applicant said/did showing personal connection",
-      "notes": "Additional context or observations"
+      "notes": "Additional context or observations",
+      "verification": "verified|unverified|contradicted"
     }},
     "Concreteness": {{
       "evidence": "Specific, quantified outcomes the applicant mentioned",
-      "notes": "Additional context or observations"
+      "notes": "Additional context or observations",
+      "verification": "verified|unverified|contradicted"
     }},
     "Credibility in context": {{
       "evidence": "Evidence that the results are credible for their stage",
-      "notes": "Additional context or observations"
+      "notes": "Additional context or observations",
+      "verification": "verified|unverified|contradicted"
     }},
     "Trajectory": {{
       "evidence": "Evidence of continuation, next steps, or ongoing work",
-      "notes": "Additional context or observations"
+      "notes": "Additional context or observations",
+      "verification": "verified|unverified|contradicted"
     }},
     "Program fit": {{
       "evidence": "What the applicant said about fit with Silkroad",
-      "notes": "Additional context or observations"
+      "notes": "Additional context or observations",
+      "verification": "verified|unverified|contradicted"
     }},
     "Regional relevance": {{
       "evidence": "Regional connection mentioned by the applicant",
-      "notes": "Additional context or observations"
+      "notes": "Additional context or observations",
+      "verification": "verified|unverified|contradicted"
     }},
     "Communication quality": {{
       "evidence": "Observations about video delivery, clarity, confidence",
-      "notes": "Additional context or observations"
+      "notes": "Additional context or observations",
+      "verification": "verified|unverified|contradicted"
     }}
   }},
   "missing_sources": []
@@ -203,6 +227,18 @@ description, results, video, how they heard, other info). Check that:
 2. All 9 criteria are covered by evidence.
 3. Communication quality has VIDEO evidence. If no video evidence exists for
    communication quality, set approved=false and flag it in your feedback.
+
+CONTRADICTED EVIDENCE:
+If the analyst tagged evidence as "contradicted" (web search found evidence
+that contradicts the claim), verify the contradiction yourself before rejecting.
+Check the web evidence cited. If the contradiction is real and the applicant's
+claim is materially false, set approved=false and flag the specific
+contradiction in your feedback. If the contradiction is minor or the analyst
+misread the web evidence, you may approve with a note correcting the record.
+
+The analyst may also tag evidence as "verified" or "unverified". Do NOT reject
+evidence merely because it is "unverified" — absence of web evidence does not
+mean the claim is false. Only "contradicted" evidence requires your review.
 
 If any evidence is unreliable, incomplete, or missing, set approved=false and
 give exact, actionable correction instructions in feedback so the analyst can
@@ -501,6 +537,21 @@ concrete evidence — quote or closely paraphrase; never invent unsupported clai
 If no pitch deck was provided, state that explicitly in your evidence for
 Product/MVP & Innovation so the grader can flag the missing required source.
 
+WEB RESEARCH (claim verification):
+After extracting evidence, search the web to verify key claims the applicant
+makes — competition wins, revenue numbers, company names, GitHub repos,
+published work, patents, awards, or other verifiable assertions. Use the
+google_search tool for each claim worth verifying. Tag each piece of evidence
+with a verification status in the "verification" field:
+- "verified": web search found supporting evidence for the claim
+- "unverified": web search found no evidence (DO NOT penalize — absence of
+  evidence is NOT evidence of absence; the claim may simply not be indexed)
+- "contradicted": web search found evidence that contradicts the claim (flag
+  this for the grader to review)
+Only tag evidence as "contradicted" if you found clear, specific contradictory
+evidence — not merely because you couldn't find confirmation. When in doubt,
+leave verification unset or mark "unverified".
+
 {ALCHEMIST_RUBRIC_TEXT}
 
 You DO NOT SCORE. You only extract evidence. Do not assign numbers or evaluate
@@ -511,19 +562,23 @@ Output EXACTLY this JSON structure (no other format):
 {{
   "Product_MVP_Innovation": {{
     "evidence": "Evidence about the MVP, product stage, innovation, or differentiation",
-    "notes": "Additional context or observations"
+    "notes": "Additional context or observations",
+    "verification": "verified|unverified|contradicted"
   }},
   "Market_Potential": {{
     "evidence": "Evidence about revenue model, monetization path, or market feasibility",
-    "notes": "Additional context or observations"
+    "notes": "Additional context or observations",
+    "verification": "verified|unverified|contradicted"
   }},
   "Scalability_US_Market": {{
     "evidence": "Evidence about US market size, growth, accessibility, or customer segments",
-    "notes": "Additional context or observations"
+    "notes": "Additional context or observations",
+    "verification": "verified|unverified|contradicted"
   }},
   "Team_Strength": {{
     "evidence": "Evidence about team experience, skills, cohesion, or track record",
-    "notes": "Additional context or observations"
+    "notes": "Additional context or observations",
+    "verification": "verified|unverified|contradicted"
   }},
   "missing_sources": []
 }}
@@ -550,6 +605,18 @@ application text, optional video). Check that:
 
 Video is OPTIONAL. Do NOT reject evidence solely because no video was provided.
 Missing video must not affect approval.
+
+CONTRADICTED EVIDENCE:
+If the analyst tagged evidence as "contradicted" (web search found evidence
+that contradicts the claim), verify the contradiction yourself before rejecting.
+Check the web evidence cited. If the contradiction is real and the applicant's
+claim is materially false, set approved=false and flag the specific
+contradiction in your feedback. If the contradiction is minor or the analyst
+misread the web evidence, you may approve with a note correcting the record.
+
+The analyst may also tag evidence as "verified" or "unverified". Do NOT reject
+evidence merely because it is "unverified" — absence of web evidence does not
+mean the claim is false. Only "contradicted" evidence requires your review.
 
 If any evidence is unreliable, incomplete, or missing, set approved=false and
 give exact, actionable correction instructions in feedback so the analyst can

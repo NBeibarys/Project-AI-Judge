@@ -12,6 +12,7 @@ shared state between applicants — so a ThreadPoolExecutor is sufficient;
 no need for asyncio's added complexity for what's mostly I/O-bound work
 (API calls) anyway.
 """
+import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -74,10 +75,29 @@ def _build_raw_row_text(header: list, row: list) -> str:
     return "\n".join(lines)
 
 
+_URL_PATTERN = re.compile(r"https?://[^\s]+")
+
+
+def _extract_first_url(cell_value: str) -> str:
+    """Extract the first URL from a cell that may contain extra prose.
+
+    Applicants sometimes paste a URL followed by instructions like
+    'If audio doesn't play in browser, please download the video'.
+    Return the first whitespace-delimited URL, or empty string if no
+    URL is found.
+    """
+    if not cell_value:
+        return ""
+    match = _URL_PATTERN.search(cell_value)
+    return match.group(0) if match else ""
+
+
 def _submitted_video_url(header: list, row: list) -> str:
     for i, col in enumerate(header):
         if "video" in _normalize_for_match(col):
-            return row[i].strip() if i < len(row) else ""
+            if i < len(row):
+                return _extract_first_url(row[i])
+            return ""
     return ""
 
 
@@ -87,7 +107,9 @@ def _submitted_pitch_deck_url(header: list, row: list) -> str:
     for i, col in enumerate(header):
         col_lower = _normalize_for_match(col)
         if "pitch deck" in col_lower or "presentation" in col_lower:
-            return row[i].strip() if i < len(row) else ""
+            if i < len(row):
+                return _extract_first_url(row[i])
+            return ""
     return ""
 
 

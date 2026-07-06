@@ -47,8 +47,9 @@ APP_NAME = "fellowship_review"
 
 # Default number of Head samples to run and average. The literature
 # (arXiv:2606.26185, Perea multi-judge playbook) recommends 2-3 samples;
-# 3 is the sweet spot for variance reduction without 3x cost on every row.
-DEFAULT_N_SAMPLES = 3
+# 5 is the sweet spot for variance reduction without excessive cost on
+# every row.
+DEFAULT_N_SAMPLES = 5
 # Cap LLM calls per sample:
 #   Fellowship: analyst + grader + 1 revision = 4 worst case.
 #   R2B verify loop: analyst + grader × 3 iterations = 6 worst case.

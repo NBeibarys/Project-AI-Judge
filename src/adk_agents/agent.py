@@ -32,7 +32,7 @@ from google.adk.agents import Agent, BaseAgent, InvocationContext, LoopAgent
 from google.adk.apps import App
 from google.adk.events import Event, EventActions
 from google.adk.models.google_llm import Gemini
-from google.adk.tools import url_context
+from google.adk.tools import google_search, url_context
 from google.genai import types
 
 from ..programs import FELLOWSHIP_CONFIG, ProgramConfig
@@ -53,6 +53,13 @@ from .schemas import (
 # (hence multi-sample averaging of the Head), but it reduces run-to-run
 # jitter. Per spec all three agents run at temp=0.
 GRADER_TEMPERATURE = 0.0
+
+# Determinism seed: Gemini supports a seed parameter so that the same input
+# produces the same output across runs. This makes the multi-sample Head
+# averaging meaningful (residual variance comes only from backend routing,
+# not from the model's own sampling) and makes re-runs reproducible for
+# audit. Same seed for all three agents (analyst, grader, head).
+DETERMINISM_SEED = 7524
 
 
 def _as_dict(value) -> dict:
@@ -239,6 +246,15 @@ def build_root_agent(
     else:
         analyst_schema = AnalystReport
 
+    # Fellowship V2 and Alchemist analysts get google_search (Gemini
+    # built-in web search via the ADK GoogleSearchTool) to verify applicant
+    # claims against the web. R2B is video-primary with a different flow
+    # and is excluded per spec.
+    if program_config.program in ("fellowship_v2", "alchemist"):
+        analyst_tools = [url_context, google_search]
+    else:
+        analyst_tools = [url_context]
+
     analyst = Agent(
         name="analyst",
         description="Extracts grounded rubric evidence from application text and video.",
@@ -254,11 +270,12 @@ def build_root_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             response_mime_type="application/json",
+            seed=DETERMINISM_SEED,
         ),
         instruction=program_config.analyst_instruction,
         output_schema=analyst_schema,
         output_key="analyst_report",
-        tools=[url_context],
+        tools=analyst_tools,
         timeout=240,
     )
     if program_config.uses_separate_head:
@@ -272,6 +289,7 @@ def build_root_agent(
             ),
             generate_content_config=types.GenerateContentConfig(
                 temperature=GRADER_TEMPERATURE,
+                seed=DETERMINISM_SEED,
             ),
             instruction=program_config.grader_instruction,
             output_schema=R2BGraderVerdict,
@@ -289,6 +307,10 @@ def build_root_agent(
             model=Gemini(
                 model=grader_model,
                 retry_options=types.HttpRetryOptions(attempts=1),
+            ),
+            generate_content_config=types.GenerateContentConfig(
+                temperature=GRADER_TEMPERATURE,
+                seed=DETERMINISM_SEED,
             ),
             instruction=program_config.grader_instruction,
             output_schema=GraderVerdict,
@@ -339,6 +361,7 @@ def build_head_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             response_mime_type="application/json",
+            seed=DETERMINISM_SEED,
         ),
         instruction=program_config.head_instruction,
         output_schema=head_schema,

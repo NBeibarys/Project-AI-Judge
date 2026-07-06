@@ -74,7 +74,7 @@ class Config:
             analyzer_model=os.environ.get("ANALYZER_MODEL", "gemini-3.5-flash"),
             grader_model=os.environ.get("GRADER_MODEL", "gemini-3.5-flash"),
             head_model=os.environ.get("HEAD_MODEL", os.environ.get("GRADER_MODEL", "gemini-3.5-flash")),
-            n_samples=int(os.environ.get("N_SAMPLES", "3")),
+            n_samples=int(os.environ.get("N_SAMPLES", "5")),
             max_concurrency=int(os.environ.get("MAX_CONCURRENCY", "4")),
             checkpoint_path=os.environ.get("CHECKPOINT_PATH", "checkpoint.json"),
             program_config=program_config,
