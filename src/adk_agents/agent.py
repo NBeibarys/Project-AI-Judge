@@ -38,11 +38,11 @@ from google.genai import types
 from ..programs import FELLOWSHIP_CONFIG, ProgramConfig
 from .schemas import AnalystReport, GraderVerdict, R2BGraderVerdict, R2BHeadScore
 
-# Grader/Head temperature: the LLM-as-judge literature (arXiv:2603.28304,
-# arXiv:2606.26185) recommends low temperature for scoring. temp=0 does
-# NOT fully eliminate variance (hence multi-sample averaging of the Head),
-# but it reduces run-to-run jitter. Analyst stays at default temp because
-# evidence extraction benefits from some diversity across multi-sample passes.
+# Grader/Head/Analyst temperature: the LLM-as-judge literature
+# (arXiv:2603.28304, arXiv:2606.26185) recommends low temperature for both
+# evidence extraction and scoring. temp=0 does NOT fully eliminate variance
+# (hence multi-sample averaging of the Head), but it reduces run-to-run
+# jitter. Per spec all three agents run at temp=0.
 GRADER_TEMPERATURE = 0.0
 
 
@@ -224,6 +224,14 @@ def build_root_agent(
         model=Gemini(
             model=analyzer_model,
             retry_options=types.HttpRetryOptions(attempts=1),
+        ),
+        # Spec: all three agents (analyst, grader, head) run at temp=0.
+        # The LLM-as-judge literature (arXiv:2603.28304, arXiv:2606.26185)
+        # recommends low temperature for both evidence extraction and
+        # scoring; multi-sample averaging of the Head handles the residual
+        # variance that temp=0 cannot fully eliminate.
+        generate_content_config=types.GenerateContentConfig(
+            temperature=GRADER_TEMPERATURE,
         ),
         instruction=program_config.analyst_instruction,
         output_schema=AnalystReport,
