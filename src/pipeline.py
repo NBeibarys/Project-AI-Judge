@@ -281,7 +281,7 @@ def process_row(
     # (header containing 'pitch deck' or 'presentation') and ingest the
     # linked Google Slides / Google Drive file as a PDF via the same
     # Drive download -> GCS/Files API upload path used for videos.
-    if config.program_config.program == "alchemist":
+    if config.program_config.requires_pitch_deck:
         submitted_pitch_deck_url = _submitted_pitch_deck_url(header, row)
         if submitted_pitch_deck_url:
             initial_state["submitted_pitch_deck_url"] = submitted_pitch_deck_url

@@ -72,7 +72,14 @@ class ProgramConfig:
     # analyst -> web_verifier -> grader (max 3 iterations), and the head
     # receives the web_verification_report alongside the analyst_report.
     # Fellowship V2 enables this; R2B and Alchemist do not.
+    # NOTE: web_verifier was removed — 3-agent pipeline is the default.
+    # Field kept for backward compatibility with ProgramConfig consumers.
     uses_web_verification: bool = False
+    # Whether a pitch deck PDF is required for this program. When True,
+    # the pipeline ingests the pitch deck (Google Slides / Drive PDF) as
+    # a multimodal Part alongside the video. Missing pitch deck penalizes
+    # the relevant criteria (e.g., cap Product/MVP at 4 for Alchemist).
+    requires_pitch_deck: bool = False
     # Web verifier instruction (only used when uses_web_verification=True).
     web_verifier_instruction: str = ""
     # Per-program sheet-geometry defaults, used by Config.from_env when the
@@ -176,6 +183,7 @@ ALCHEMIST_CONFIG = ProgramConfig(
     grader_instruction=ALCHEMIST_GRADER_INSTRUCTION,
     source_priority="text_primary",
     uses_separate_head=True,
+    requires_pitch_deck=True,
     head_instruction=ALCHEMIST_HEAD_INSTRUCTION,
     sheet_id_env="ALCHEMIST_SHEET_ID",
     sheet_range_env="ALCHEMIST_SHEET_RANGE",
