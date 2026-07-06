@@ -269,16 +269,11 @@ def build_root_agent(
     )
     gate = R2BApprovalGate(name="approval_gate")
     max_iter = 3
-    # When the program uses web verification (Fellowship V2 only), insert the
-    # web_verifier agent between the analyst and the grader. Every iteration
-    # of the loop runs: analyst -> web_verifier -> grader -> gate. If the
-    # grader rejects, the loop returns to the analyst (web_verifier re-runs
-    # on the revised evidence). R2B and Alchemist keep the 3-agent pipeline.
-    if program_config.uses_web_verification:
-        web_verifier = build_web_verifier_agent(analyzer_model, program_config)
-        sub_agents = [analyst, web_verifier, grader, gate]
-    else:
-        sub_agents = [analyst, grader, gate]
+    # Web verifier was removed: the 3-agent pipeline (analyst -> grader -> gate)
+    # is reliable and the rubric already handles unverified claims via the
+    # "each level up requires MORE EVIDENCE" rule. See git history for the
+    # web_verifier experiment if it needs to be revived.
+    sub_agents = [analyst, grader, gate]
     return LoopAgent(
         name=f"{program_config.program}_review",
         description="Analyst and grader review loop.",
