@@ -31,3 +31,4 @@ docs/superpowers/
 Thumbs.db
 .vscode/
 .idea/
+.venv/
