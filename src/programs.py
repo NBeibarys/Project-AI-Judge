@@ -191,11 +191,10 @@ ALCHEMIST_CONFIG = ProgramConfig(
     top_label_row_env="ALCHEMIST_TOP_LABEL_ROW",
     score_column_name="AI",
     reasoning_column_name="AI_Reasoning",
-    # Sheet geometry left as defaults — the user will configure the actual
-    # Alchemist sheet layout (header_row, top_label_row, input/output columns)
-    # via the ALCHEMIST_* env vars after the sheet is created.
-    default_header_row=2,
-    default_top_label_row=1,
+    # CRM_Form Responses 1+ updated links tab has headers on row 1,
+    # no top label row. Data starts from row 2.
+    default_header_row=1,
+    default_top_label_row=0,
     data_start_offset=0,
     excluded_header_substrings=(
         "timestamp", "email", "phone", "telegram", "whatsapp",
