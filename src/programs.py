@@ -88,6 +88,20 @@ class ProgramConfig:
     # Fellowship/R2B: 0 (data starts immediately after the header row).
     # Fellowship V2: 1 (row 2 is a sub-header row; real data starts at row 3).
     data_start_offset: int = 0
+    # Per-program header exclusions for _build_raw_row_text: columns whose
+    # header name is in excluded_header_names, OR whose lowercased header
+    # contains any substring in excluded_header_substrings, are dropped from
+    # the text the analyzer sees. Each program owns its own list so e.g. the
+    # Alchemist's PII columns (timestamp/email/phone/...) don't leak into
+    # Fellowship's analyzer input (or vice versa). "ception" matches this
+    # sheet's "General Pereception" columns (the real header has a typo —
+    # an extra "e" after "Per" — "ception" is the common suffix of both the
+    # correct and the typo'd spelling, so it survives that) without
+    # hardcoding reviewer names, which change every cohort. Excluding these
+    # isn't just tidiness: feeding the AI a human's already-given score
+    # would anchor its judgment instead of producing an independent one.
+    excluded_header_substrings: tuple = ()
+    excluded_header_names: frozenset = frozenset({'', 'AI', 'AI_Reasoning', 'AI Reasoning', 'Total'})
 
     def apply_active_criteria(self) -> None:
         """Set the module-level active criteria the Pydantic validators read.
@@ -113,6 +127,8 @@ FELLOWSHIP_CONFIG = ProgramConfig(
     top_label_row_env="FELLOWSHIP_TOP_LABEL_ROW",
     score_column_name="AI",
     reasoning_column_name="AI Reasoning",
+    excluded_header_substrings=("ception",),
+    excluded_header_names=frozenset({"", "AI", "AI Reasoning", "Total"}),
 )
 
 
@@ -142,6 +158,8 @@ FELLOWSHIP_V2_CONFIG = ProgramConfig(
     default_header_row=2,
     default_top_label_row=1,
     data_start_offset=0,
+    excluded_header_substrings=("ception",),
+    excluded_header_names=frozenset({"", "AI", "AI_Reasoning", "AI Reasoning", "Total"}),
 )
 
 
@@ -163,6 +181,8 @@ R2B_CONFIG = ProgramConfig(
     top_label_row_env="R2B_TOP_LABEL_ROW",
     score_column_name="AI",
     reasoning_column_name="AI Reasoning",
+    excluded_header_substrings=(),
+    excluded_header_names=frozenset({"", "AI", "AI_Reasoning"}),
 )
 
 
@@ -190,6 +210,13 @@ ALCHEMIST_CONFIG = ProgramConfig(
     default_header_row=2,
     default_top_label_row=1,
     data_start_offset=0,
+    excluded_header_substrings=(
+        "timestamp", "email", "phone", "telegram", "whatsapp",
+        "ceo", "visa", "delaware", "incorporated", "registered",
+    ),
+    excluded_header_names=frozenset(
+        {"", "AI", "AI_Reasoning", "AI Reasoning", "Total", "Score"}
+    ),
 )
 
 

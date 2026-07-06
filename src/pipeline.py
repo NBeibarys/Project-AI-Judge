@@ -29,16 +29,8 @@ from .google_clients import (
 from .video_urls import VideoResolutionError, resolve_video_url
 from .video_ingestion import ingest_pitch_deck, ingest_video_for_r2b
 
-# Excluded from what the analyzer sees — output columns themselves (would
-# be circular), and human-given score columns. "ception" matches this
-# sheet's "General Pereception" columns (the real header has a typo —
-# an extra "e" after "Per" — "ception" is the common suffix of both the
-# correct and the typo'd spelling, so it survives that) without hardcoding
-# reviewer names, which change every cohort. Excluding these isn't just
-# tidiness: feeding the AI a human's already-given score would anchor its
-# judgment instead of producing an independent one.
-EXCLUDED_HEADER_SUBSTRINGS = ("ception",)
-EXCLUDED_HEADER_NAMES = {"", "AI", "AI Reasoning", "Total"}
+# Header exclusion lists are program-specific — see ProgramConfig fields
+# excluded_header_substrings and excluded_header_names in src/programs.py.
 
 
 def _normalize_for_match(text: str) -> str:
@@ -64,11 +56,22 @@ def _derive_row_id(header: list, row: list, sheet_row_number: int) -> str:
     return f"row_{sheet_row_number}"
 
 
-def _build_raw_row_text(header: list, row: list) -> str:
-    """Every eligible question/answer labeled as plain text for both agents."""
+def _build_raw_row_text(
+    header: list,
+    row: list,
+    *,
+    excluded_header_names: frozenset,
+    excluded_header_substrings: tuple,
+) -> str:
+    """Every eligible question/answer labeled as plain text for both agents.
+
+    Columns whose header name is in excluded_header_names, or whose
+    lowercased header contains any substring in excluded_header_substrings,
+    are skipped. Both lists are program-specific (see ProgramConfig).
+    """
     lines = []
     for i, col in enumerate(header):
-        if col in EXCLUDED_HEADER_NAMES or any(sub in col.lower() for sub in EXCLUDED_HEADER_SUBSTRINGS):
+        if col in excluded_header_names or any(sub in col.lower() for sub in excluded_header_substrings):
             continue
         value = row[i] if i < len(row) else ""
         lines.append(f"{col}: {value}")
@@ -144,7 +147,12 @@ def process_row(
 
     initial_state = {
         "row_id": row_id,
-        "raw_row_text": _build_raw_row_text(header, row),
+        "raw_row_text": _build_raw_row_text(
+            header,
+            row,
+            excluded_header_names=config.program_config.excluded_header_names,
+            excluded_header_substrings=config.program_config.excluded_header_substrings,
+        ),
         "retry_count": 0,
     }
     submitted_video_url = _submitted_video_url(header, row)
