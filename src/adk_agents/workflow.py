@@ -103,6 +103,15 @@ class AdkReviewWorkflow:
                         mime_type="video/mp4",
                     )
                 )
+        # Alchemist: pitch deck PDF as a multimodal Part (required source).
+        if state.get("pitch_deck_url"):
+            deck_mime = state.get("pitch_deck_mime_type", "application/pdf")
+            parts.append(
+                types.Part.from_uri(
+                    file_uri=state["pitch_deck_url"],
+                    mime_type=deck_mime,
+                )
+            )
         text = state.get("raw_row_text", "")
         if state.get("video_requires_url_context"):
             text += (
@@ -111,6 +120,8 @@ class AdkReviewWorkflow:
             )
         if state.get("video_error"):
             text += f"\n\nVIDEO UNAVAILABLE: {state['video_error']}"
+        if state.get("pitch_deck_error"):
+            text += f"\n\nPITCH DECK UNAVAILABLE: {state['pitch_deck_error']}"
         parts.append(types.Part(text=text))
         return parts
 
@@ -270,10 +281,13 @@ class AdkReviewWorkflow:
             raise RuntimeError("Head agent produced no output.")
         result = _as_dict(head_output)
 
-        # Convert Fellowship V2 flat schema to the criterion_scores /
-        # criterion_rationale dict format that _average_head_samples expects.
+        # Convert flat schema (Fellowship V2, Alchemist) to the
+        # criterion_scores / criterion_rationale dict format that
+        # _average_head_samples expects.
         if self.program_config.program == "fellowship_v2" and "criterion_scores" not in result:
             result = self._convert_fellowship_v2_head(result)
+        elif self.program_config.program == "alchemist" and "criterion_scores" not in result:
+            result = self._convert_alchemist_head(result)
 
         return result
 
@@ -289,6 +303,28 @@ class AdkReviewWorkflow:
             "Program_fit": "Program fit",
             "Regional_relevance": "Regional relevance",
             "Communication_quality": "Communication quality",
+        }
+        criterion_scores = {}
+        criterion_rationale = {}
+        for field_name, criterion_name in criteria_map.items():
+            criterion_scores[criterion_name] = flat.get(field_name, 5)
+            criterion_rationale[criterion_name] = flat.get(f"{field_name}_rationale", "")
+        return {
+            "criterion_scores": criterion_scores,
+            "criterion_rationale": criterion_rationale,
+            "final_score": flat.get("final_score", 5.0),
+            "override": flat.get("override", 0.0),
+            "override_reasoning": flat.get("override_reasoning", ""),
+            "confidence": flat.get("confidence", "medium"),
+        }
+
+    def _convert_alchemist_head(self, flat: dict) -> dict:
+        """Convert AlchemistHeadScore flat fields to dict format."""
+        criteria_map = {
+            "Product_MVP_Innovation": "Product/MVP & Innovation",
+            "Market_Potential": "Market Potential",
+            "Scalability_US_Market": "Scalability & Readiness for the U.S. Market",
+            "Team_Strength": "Team Strength",
         }
         criterion_scores = {}
         criterion_rationale = {}

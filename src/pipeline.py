@@ -26,7 +26,7 @@ from .google_clients import (
     write_row_result,
 )
 from .video_urls import VideoResolutionError, resolve_video_url
-from .video_ingestion import ingest_video_for_r2b
+from .video_ingestion import ingest_pitch_deck, ingest_video_for_r2b
 
 # Excluded from what the analyzer sees — output columns themselves (would
 # be circular), and human-given score columns. "ception" matches this
@@ -77,6 +77,16 @@ def _build_raw_row_text(header: list, row: list) -> str:
 def _submitted_video_url(header: list, row: list) -> str:
     for i, col in enumerate(header):
         if "video" in _normalize_for_match(col):
+            return row[i].strip() if i < len(row) else ""
+    return ""
+
+
+def _submitted_pitch_deck_url(header: list, row: list) -> str:
+    """Find the pitch deck link column. Matches headers containing
+    'pitch deck' or 'presentation' (case-insensitive)."""
+    for i, col in enumerate(header):
+        col_lower = _normalize_for_match(col)
+        if "pitch deck" in col_lower or "presentation" in col_lower:
             return row[i].strip() if i < len(row) else ""
     return ""
 
@@ -163,6 +173,31 @@ def process_row(
             "video_error",
             "No video URL submitted or video could not be resolved.",
         )
+
+    # Alchemist: pitch deck is required. Detect a pitch deck column
+    # (header containing 'pitch deck' or 'presentation') and ingest the
+    # linked Google Slides / Google Drive file as a PDF via the same
+    # Drive download -> GCS/Files API upload path used for videos.
+    if config.program_config.program == "alchemist":
+        submitted_pitch_deck_url = _submitted_pitch_deck_url(header, row)
+        if submitted_pitch_deck_url:
+            initial_state["submitted_pitch_deck_url"] = submitted_pitch_deck_url
+            try:
+                resolved_deck = ingest_pitch_deck(
+                    submitted_pitch_deck_url,
+                    config.service_account_path,
+                )
+                initial_state["pitch_deck_url"] = resolved_deck.uri
+                initial_state["pitch_deck_mime_type"] = resolved_deck.mime_type
+                initial_state["pitch_deck_source"] = resolved_deck.source
+            except VideoResolutionError as exc:
+                initial_state["pitch_deck_error"] = str(exc)
+        else:
+            # No pitch deck column or no URL — flag so the analyst knows
+            # the required pitch deck is missing.
+            initial_state["pitch_deck_error"] = (
+                "No pitch deck URL submitted or pitch deck could not be resolved."
+            )
 
     final_state = workflow.invoke(initial_state)
     final_result = final_state.get("final_result", {})

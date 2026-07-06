@@ -36,7 +36,16 @@ from google.adk.tools import url_context
 from google.genai import types
 
 from ..programs import FELLOWSHIP_CONFIG, ProgramConfig
-from .schemas import AnalystReport, FellowshipV2AnalystReport, FellowshipV2HeadScore, GraderVerdict, R2BGraderVerdict, R2BHeadScore
+from .schemas import (
+    AlchemistAnalystReport,
+    AlchemistHeadScore,
+    AnalystReport,
+    FellowshipV2AnalystReport,
+    FellowshipV2HeadScore,
+    GraderVerdict,
+    R2BGraderVerdict,
+    R2BHeadScore,
+)
 
 # Grader/Head/Analyst temperature: the LLM-as-judge literature
 # (arXiv:2603.28304, arXiv:2606.26185) recommends low temperature for both
@@ -219,11 +228,14 @@ def build_root_agent(
     """
     program_config.apply_active_criteria()
 
-    # Use explicit schema with named criteria fields for Fellowship V2
-    # so Gemini knows exactly what keys to fill. Generic dict[str, ...]
-    # produces empty results because the model doesn't know the keys.
+    # Use explicit schema with named criteria fields for Fellowship V2 and
+    # Alchemist so Gemini knows exactly what keys to fill. Generic
+    # dict[str, ...] produces empty results because the model doesn't know
+    # the keys.
     if program_config.program == "fellowship_v2":
         analyst_schema = FellowshipV2AnalystReport
+    elif program_config.program == "alchemist":
+        analyst_schema = AlchemistAnalystReport
     else:
         analyst_schema = AnalystReport
 
@@ -307,9 +319,13 @@ def build_head_agent(
     """
     program_config.apply_active_criteria()
 
-    # Use explicit schema with named criteria fields for Fellowship V2
+    # Use explicit schema with named criteria fields for Fellowship V2 and
+    # Alchemist. The generic R2BHeadScore dict schema produces empty results
+    # because the model doesn't know the criterion names.
     if program_config.program == "fellowship_v2":
         head_schema = FellowshipV2HeadScore
+    elif program_config.program == "alchemist":
+        head_schema = AlchemistHeadScore
     else:
         head_schema = R2BHeadScore
 

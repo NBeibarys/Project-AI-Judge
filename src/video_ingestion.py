@@ -283,3 +283,122 @@ def ingest_video_for_r2b(
     raise VideoResolutionError(
         "Video could not be resolved to a downloadable source."
     )
+
+
+# ---------------------------------------------------------------------------
+# Pitch deck ingestion (Alchemist: Google Slides / Google Drive PDF download)
+# ---------------------------------------------------------------------------
+
+# PDF MIME for Gemini. Pitch decks are downloaded as PDF regardless of
+# whether the source is a Google Slides presentation or a Drive PDF.
+PITCH_DECK_MIME_TYPE = "application/pdf"
+
+
+def _is_google_slides_url(url: str) -> bool:
+    """Google Slides URLs look like:
+      https://docs.google.com/presentation/d/<ID>/...
+    """
+    return "docs.google.com/presentation" in url.lower()
+
+
+def _slides_export_url(url: str) -> str:
+    """Convert a Google Slides URL to its PDF export endpoint."""
+    import re
+
+    match = re.search(r"/presentation/d/([a-zA-Z0-9_-]+)", url)
+    if not match:
+        raise VideoResolutionError(
+            "Could not extract presentation ID from Google Slides URL."
+        )
+    pres_id = match.group(1)
+    return f"https://docs.google.com/presentation/d/{pres_id}/export/pdf"
+
+
+def ingest_pitch_deck(
+    submitted_url: str,
+    service_account_path: str,
+) -> ResolvedVideo:
+    """Resolve a submitted pitch deck link for Alchemist grading.
+
+    Handles two source shapes:
+      - Google Slides links (docs.google.com/presentation/d/<ID>/...)
+        — converted to a PDF export URL and downloaded via HTTPS.
+      - Google Drive file links (drive.google.com/... or open?id=...)
+        — downloaded via the Drive API (same path as video ingestion).
+
+    On Vertex AI, the downloaded PDF is uploaded to GCS and a gs:// URI is
+    returned. On the Developer API, the Gemini Files API is used instead.
+    The returned ResolvedVideo carries mime_type=application/pdf.
+    """
+    tmp_path = _temp_pitch_deck_path(submitted_url)
+
+    try:
+        # Google Slides: export as PDF via HTTPS.
+        if _is_google_slides_url(submitted_url):
+            export_url = _slides_export_url(submitted_url)
+            _download_https(export_url, tmp_path)
+        else:
+            # Google Drive file link: download via the Drive API.
+            drive_id = extract_drive_file_id(submitted_url)
+            if drive_id:
+                service = _drive_service(service_account_path)
+                _download_drive_file(service, drive_id, tmp_path)
+            else:
+                # Direct HTTPS link to a PDF.
+                _download_https(submitted_url, tmp_path)
+
+            if os.path.getsize(tmp_path) > FILES_API_MAX_BYTES:
+                raise VideoResolutionError(
+                    "Pitch deck exceeds the 2GB size limit."
+                )
+
+        if _is_vertex_backend():
+            uri, mime = _upload_pitch_deck_to_gcs(tmp_path, service_account_path)
+            return ResolvedVideo(uri=uri, mime_type=mime, source="pitch_deck_upload")
+        else:
+            uri = _upload_to_gemini_files_api(tmp_path, mime_type=PITCH_DECK_MIME_TYPE)
+            return ResolvedVideo(uri=uri, mime_type=PITCH_DECK_MIME_TYPE, source="pitch_deck_upload")
+
+    except VideoResolutionError:
+        raise
+    except Exception as exc:
+        raise VideoResolutionError(
+            f"Pitch deck download failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def _temp_pitch_deck_path(url: str) -> str:
+    """Allocate a temp path with a .pdf suffix for pitch deck downloads."""
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=".pdf", delete=False, dir=tempfile.gettempdir(),
+    )
+    path = tmp.name
+    tmp.close()
+    return path
+
+
+def _upload_pitch_deck_to_gcs(local_path: str, service_account_path: str) -> tuple[str, str]:
+    """Upload a local pitch deck PDF to Google Cloud Storage and return (gs:// URI, mime_type).
+
+    Same pattern as _upload_to_gcs but for PDF pitch decks. The file is
+    uploaded to the VIDEO_STAGING_BUCKET bucket (shared with videos)
+    with a unique name and the gs:// URI is returned for passing to Gemini
+    via Part.from_uri.
+    """
+    from google.cloud import storage
+
+    creds = service_account.Credentials.from_service_account_file(
+        service_account_path,
+        scopes=["https://www.googleapis.com/auth/devstorage.read_write"],
+    )
+    client = storage.Client(credentials=creds)
+    bucket = client.bucket("VIDEO_STAGING_BUCKET")
+    blob_name = f"pitch_decks/{uuid.uuid4().hex}.pdf"
+    blob = bucket.blob(blob_name)
+    blob.upload_from_filename(local_path)
+    return f"gs://VIDEO_STAGING_BUCKET/{blob_name}", PITCH_DECK_MIME_TYPE

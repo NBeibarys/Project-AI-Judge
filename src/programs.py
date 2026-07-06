@@ -21,6 +21,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .adk_agents.prompts import (
+    ALCHEMIST_ANALYST_INSTRUCTION,
+    ALCHEMIST_GRADER_INSTRUCTION,
+    ALCHEMIST_HEAD_INSTRUCTION,
+    ALCHEMIST_RUBRIC_TEXT,
     ANALYST_INSTRUCTION,
     GRADER_HEAD_INSTRUCTION,
     FELLOWSHIP_V2_ANALYST_INSTRUCTION,
@@ -35,13 +39,15 @@ from .adk_agents.prompts import (
 )
 from .adk_agents.schemas import (
     RUBRIC_CRITERIA,
+    RUBRIC_CRITERIA_ALCHEMIST,
     RUBRIC_CRITERIA_R2B,
     RUBRIC_WEIGHTS,
+    RUBRIC_WEIGHTS_ALCHEMIST,
     RUBRIC_WEIGHTS_R2B,
     set_active_criteria,
 )
 
-ProgramName = Literal["fellowship", "fellowship_v2", "r2b"]
+ProgramName = Literal["fellowship", "fellowship_v2", "r2b", "alchemist"]
 
 
 @dataclass(frozen=True)
@@ -159,10 +165,39 @@ R2B_CONFIG = ProgramConfig(
     reasoning_column_name="AI Reasoning",
 )
 
+
+# --- Alchemist (4 criteria, 5-band 1-10, pitch deck + text primary) --------
+
+ALCHEMIST_CONFIG = ProgramConfig(
+    program="alchemist",
+    rubric_criteria=RUBRIC_CRITERIA_ALCHEMIST,
+    rubric_weights=RUBRIC_WEIGHTS_ALCHEMIST,
+    rubric_text=ALCHEMIST_RUBRIC_TEXT,
+    analyst_instruction=ALCHEMIST_ANALYST_INSTRUCTION,
+    grader_instruction=ALCHEMIST_GRADER_INSTRUCTION,
+    source_priority="text_primary",
+    uses_separate_head=True,
+    head_instruction=ALCHEMIST_HEAD_INSTRUCTION,
+    sheet_id_env="ALCHEMIST_SHEET_ID",
+    sheet_range_env="ALCHEMIST_SHEET_RANGE",
+    header_row_env="ALCHEMIST_HEADER_ROW",
+    top_label_row_env="ALCHEMIST_TOP_LABEL_ROW",
+    score_column_name="AI",
+    reasoning_column_name="AI_Reasoning",
+    # Sheet geometry left as defaults — the user will configure the actual
+    # Alchemist sheet layout (header_row, top_label_row, input/output columns)
+    # via the ALCHEMIST_* env vars after the sheet is created.
+    default_header_row=2,
+    default_top_label_row=1,
+    data_start_offset=0,
+)
+
+
 _PROGRAMS: dict[str, ProgramConfig] = {
     "fellowship": FELLOWSHIP_CONFIG,
     "fellowship_v2": FELLOWSHIP_V2_CONFIG,
     "r2b": R2B_CONFIG,
+    "alchemist": ALCHEMIST_CONFIG,
 }
 
 

@@ -60,6 +60,21 @@ RUBRIC_CRITERIA_R2B = (
 RUBRIC_WEIGHTS_R2B = {criterion: round(1.0 / 6.0, 4) for criterion in RUBRIC_CRITERIA_R2B}
 
 # ---------------------------------------------------------------------------
+# Alchemist rubric (4 criteria, 5-band: 1-2 / 3-4 / 5-6 / 7-8 / 9-10, equal weights)
+# ---------------------------------------------------------------------------
+
+RUBRIC_CRITERIA_ALCHEMIST = (
+    "Product/MVP & Innovation",
+    "Market Potential",
+    "Scalability & Readiness for the U.S. Market",
+    "Team Strength",
+)
+
+RUBRIC_WEIGHTS_ALCHEMIST = {
+    criterion: round(1.0 / 4.0, 4) for criterion in RUBRIC_CRITERIA_ALCHEMIST
+}
+
+# ---------------------------------------------------------------------------
 # Active criteria slot — the AnalystReport validator reads this indirection
 # so a program switch (fellowship <-> R2B) changes which keys the contract
 # enforces, without subclassing the model. Default = fellowship (unchanged).
@@ -264,6 +279,78 @@ class FellowshipV2HeadScore(BaseModel):
                 "Program fit": self.Program_fit_rationale,
                 "Regional relevance": self.Regional_relevance_rationale,
                 "Communication quality": self.Communication_quality_rationale,
+            },
+            final_score=self.final_score,
+            override=self.override,
+            override_reasoning=self.override_reasoning,
+            confidence=self.confidence,
+        )
+
+
+class AlchemistAnalystReport(BaseModel):
+    """Explicit schema with all 4 Alchemist criteria as named fields.
+
+    Same purpose as FellowshipV2AnalystReport: sent to Gemini as
+    response_schema so the model knows exactly what keys to fill. The
+    generic dict[str, CriterionEvidence] in AnalystReport doesn't convey
+    the required keys to the model.
+    """
+    model_config = ConfigDict(extra="forbid")
+    Product_MVP_Innovation: CriterionEvidence
+    Market_Potential: CriterionEvidence
+    Scalability_US_Market: CriterionEvidence
+    Team_Strength: CriterionEvidence
+    missing_sources: list[str] = Field(default_factory=list)
+
+    def to_analyst_report(self) -> "AnalystReport":
+        """Convert to the generic AnalystReport format for downstream agents."""
+        return AnalystReport(
+            criteria={
+                "Product/MVP & Innovation": self.Product_MVP_Innovation,
+                "Market Potential": self.Market_Potential,
+                "Scalability & Readiness for the U.S. Market": self.Scalability_US_Market,
+                "Team Strength": self.Team_Strength,
+            },
+            missing_sources=self.missing_sources,
+        )
+
+
+class AlchemistHeadScore(BaseModel):
+    """Explicit Head scorer schema with all 4 Alchemist criteria as named fields.
+
+    Same purpose as FellowshipV2HeadScore but for the Alchemist rubric (4
+    criteria instead of 9). The validator enforces 1-10 integer scores and
+    requires rationale for every criterion before the score (rationale-before-
+    score CoT). Includes a minor ±1.0 override with written reasoning.
+    """
+    model_config = ConfigDict(extra="forbid")
+    Product_MVP_Innovation: int = Field(ge=1, le=10)
+    Market_Potential: int = Field(ge=1, le=10)
+    Scalability_US_Market: int = Field(ge=1, le=10)
+    Team_Strength: int = Field(ge=1, le=10)
+    Product_MVP_Innovation_rationale: str = Field(min_length=1)
+    Market_Potential_rationale: str = Field(min_length=1)
+    Scalability_US_Market_rationale: str = Field(min_length=1)
+    Team_Strength_rationale: str = Field(min_length=1)
+    final_score: float = Field(ge=1, le=10)
+    override: float = Field(default=0.0, ge=-1.0, le=1.0)
+    override_reasoning: str = ""
+    confidence: Literal["low", "medium", "high"]
+
+    def to_head_score(self) -> "R2BHeadScore":
+        """Convert to the generic R2BHeadScore format for averaging."""
+        return R2BHeadScore(
+            criterion_scores={
+                "Product/MVP & Innovation": self.Product_MVP_Innovation,
+                "Market Potential": self.Market_Potential,
+                "Scalability & Readiness for the U.S. Market": self.Scalability_US_Market,
+                "Team Strength": self.Team_Strength,
+            },
+            criterion_rationale={
+                "Product/MVP & Innovation": self.Product_MVP_Innovation_rationale,
+                "Market Potential": self.Market_Potential_rationale,
+                "Scalability & Readiness for the U.S. Market": self.Scalability_US_Market_rationale,
+                "Team Strength": self.Team_Strength_rationale,
             },
             final_score=self.final_score,
             override=self.override,
