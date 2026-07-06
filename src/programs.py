@@ -1,21 +1,14 @@
 """Program configuration: per-program rubric, prompts, and sheet geometry.
 
-Fellowship and R2B coexist. The pipeline selects a ProgramConfig at startup
-(via the ``PROGRAM`` env var, default ``fellowship``) and threads it through
-the agent builder and workflow so the same LoopAgent core grades with the
-right rubric, instructions, and sheet columns.
+The pipeline selects a ProgramConfig at startup (via the ``PROGRAM`` env var,
+default ``fellowship_v2``) and threads it through the agent builder and
+workflow so the same LoopAgent core grades with the right rubric,
+instructions, and sheet columns.
 
-Architecture differs by program:
-  - Fellowship (uses_separate_head=False): analyst + grader (verify+score
-    combined in one agent). Single run, no multi-sample averaging.
-  - R2B (uses_separate_head=True): analyst + grader (verify only) in a loop,
-    then a separate Head agent (score only, after approval). The Head is
-    re-run N_SAMPLES times and its criterion scores are averaged, with the
-    rationale selected from the run closest to the average (per spec).
-
-Existing fellowship behavior is untouched: the default program is
-``fellowship``, and the original env var names (FELLOWSHIP_SHEET_ID, etc.)
-still work exactly as before.
+All programs use the separate-head architecture: analyst + grader (verify
+only) in a loop, then a separate Head agent (score only, after approval). The
+Head is re-run N_SAMPLES times and its criterion scores are averaged, with
+the rationale selected from the run closest to the average (per spec).
 """
 from dataclasses import dataclass
 from typing import Literal
@@ -25,17 +18,15 @@ from .adk_agents.prompts import (
     ALCHEMIST_GRADER_INSTRUCTION,
     ALCHEMIST_HEAD_INSTRUCTION,
     ALCHEMIST_RUBRIC_TEXT,
-    ANALYST_INSTRUCTION,
-    GRADER_HEAD_INSTRUCTION,
     FELLOWSHIP_V2_ANALYST_INSTRUCTION,
     FELLOWSHIP_V2_GRADER_INSTRUCTION,
     FELLOWSHIP_V2_HEAD_INSTRUCTION,
     FELLOWSHIP_V2_RUBRIC_TEXT,
+    FELLOWSHIP_V2_WEB_VERIFIER_INSTRUCTION,
     R2B_ANALYST_INSTRUCTION,
     R2B_GRADER_INSTRUCTION,
     R2B_HEAD_INSTRUCTION,
     R2B_RUBRIC_TEXT,
-    RUBRIC_TEXT,
 )
 from .adk_agents.schemas import (
     RUBRIC_CRITERIA,
@@ -47,7 +38,7 @@ from .adk_agents.schemas import (
     set_active_criteria,
 )
 
-ProgramName = Literal["fellowship", "fellowship_v2", "r2b", "alchemist"]
+ProgramName = Literal["fellowship_v2", "r2b", "alchemist"]
 
 
 @dataclass(frozen=True)
@@ -76,6 +67,14 @@ class ProgramConfig:
     reasoning_column_name: str
     # Head scorer instruction (only used when uses_separate_head=True).
     head_instruction: str = ""
+    # Whether this program runs a dedicated web_verifier agent between the
+    # analyst and the grader. When True, the workflow runs
+    # analyst -> web_verifier -> grader (max 3 iterations), and the head
+    # receives the web_verification_report alongside the analyst_report.
+    # Fellowship V2 enables this; R2B and Alchemist do not.
+    uses_web_verification: bool = False
+    # Web verifier instruction (only used when uses_web_verification=True).
+    web_verifier_instruction: str = ""
     # Per-program sheet-geometry defaults, used by Config.from_env when the
     # corresponding env var is unset. Fellowship and R2B sheets have a merged
     # top-label row above the per-column header row (header_row=2,
@@ -110,28 +109,6 @@ class ProgramConfig:
         set_active_criteria(self.rubric_criteria)
 
 
-# --- Fellowship (default; mirrors the original hardcoded config) -----------
-
-FELLOWSHIP_CONFIG = ProgramConfig(
-    program="fellowship",
-    rubric_criteria=RUBRIC_CRITERIA,
-    rubric_weights=RUBRIC_WEIGHTS,
-    rubric_text=RUBRIC_TEXT,
-    analyst_instruction=ANALYST_INSTRUCTION,
-    grader_instruction=GRADER_HEAD_INSTRUCTION,
-    source_priority="text_primary",
-    uses_separate_head=False,
-    sheet_id_env="FELLOWSHIP_SHEET_ID",
-    sheet_range_env="FELLOWSHIP_SHEET_RANGE",
-    header_row_env="FELLOWSHIP_HEADER_ROW",
-    top_label_row_env="FELLOWSHIP_TOP_LABEL_ROW",
-    score_column_name="AI",
-    reasoning_column_name="AI Reasoning",
-    excluded_header_substrings=("ception",),
-    excluded_header_names=frozenset({"", "AI", "AI Reasoning", "Total"}),
-)
-
-
 # --- Fellowship V2 (9 criteria, 5-band 1-10, new sheet) --------------------
 
 FELLOWSHIP_V2_CONFIG = ProgramConfig(
@@ -144,6 +121,8 @@ FELLOWSHIP_V2_CONFIG = ProgramConfig(
     source_priority="video_primary",
     uses_separate_head=True,
     head_instruction=FELLOWSHIP_V2_HEAD_INSTRUCTION,
+    uses_web_verification=True,
+    web_verifier_instruction=FELLOWSHIP_V2_WEB_VERIFIER_INSTRUCTION,
     sheet_id_env="FELLOWSHIP_V2_SHEET_ID",
     sheet_range_env="FELLOWSHIP_V2_SHEET_RANGE",
     header_row_env="FELLOWSHIP_V2_HEADER_ROW",
@@ -221,7 +200,6 @@ ALCHEMIST_CONFIG = ProgramConfig(
 
 
 _PROGRAMS: dict[str, ProgramConfig] = {
-    "fellowship": FELLOWSHIP_CONFIG,
     "fellowship_v2": FELLOWSHIP_V2_CONFIG,
     "r2b": R2B_CONFIG,
     "alchemist": ALCHEMIST_CONFIG,

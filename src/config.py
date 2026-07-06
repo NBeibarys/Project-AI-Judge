@@ -4,14 +4,13 @@ Fail fast at startup (not mid-batch) if required env vars are missing,
 since a 100+ row run that dies on row 50 from a bad API key wastes
 real API spend.
 
-Two programs coexist: Fellowship (default) and R2B. The active program is
-selected via the ``PROGRAM`` env var (default "fellowship"); each program
-owns its own sheet-geometry env-var names so the two sheets never collide.
-Fellowship callers who never set PROGRAM get byte-identical behavior to
-the original hardcoded config: same env vars (FELLOWSHIP_*), same defaults,
-same validation. A single run_batch call is exactly one program — all rows
-in a batch share the same criteria set, so the module-level active-criteria
-slot set in schemas.py never races across programs within a batch.
+Multiple programs coexist (Fellowship V2, R2B, Alchemist). The active
+program is selected via the ``PROGRAM`` env var (default
+``fellowship_v2``); each program owns its own sheet-geometry env-var
+names so the sheets never collide. A single run_batch call is exactly one
+program — all rows in a batch share the same criteria set, so the
+module-level active-criteria slot set in schemas.py never races across
+programs within a batch.
 
 Gemini-only for now (no Claude credit on this account) — see project
 memory for the multi-provider history if Claude support needs reviving.
@@ -38,7 +37,7 @@ class Config:
     program_config: ProgramConfig
 
     @classmethod
-    def from_env(cls, program: str = "fellowship") -> "Config":
+    def from_env(cls, program: str = "fellowship_v2") -> "Config":
         program_config = get_program_config(program)
         sheet_id = os.environ.get(program_config.sheet_id_env, "")
         sa_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_PATH", "")

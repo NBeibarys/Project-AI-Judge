@@ -1,22 +1,15 @@
 """Synchronous batch-facing wrapper around the asynchronous ADK workflow.
 
-Two paths, selected by ProgramConfig:
-
-  Fellowship (uses_separate_head=False):
-    Single run of the analyst->grader loop. The grader verifies+scores in one
-    step; the ApprovalGate publishes the final score. No multi-sample
-    averaging. Behavior is byte-identical to the original.
-
-  R2B (uses_separate_head=True) — per spec:
-    1. Run the analyst->grader VERIFY loop ONCE (max 3 iterations). The grader
-       does not score; it only approves or rejects the evidence.
-    2. If the evidence is approved, run the Head scorer N_SAMPLES times
-       (default 3) at temp=0. Each Head run independently scores the SAME
-       approved evidence.
-    3. Average the 6 criterion scores across the N_SAMPLES Head runs.
-    4. Select the rationale from the Head run whose final_score is closest to
-       the averaged final score (closest-rationale selection).
-    5. Final score = averaged; rationale = selected from closest run.
+All programs use the separate-head architecture:
+  1. Run the analyst->grader VERIFY loop ONCE (max 3 iterations). The grader
+     does not score; it only approves or rejects the evidence.
+  2. If the evidence is approved, run the Head scorer N_SAMPLES times
+     (default 5) at temp=0. Each Head run independently scores the SAME
+     approved evidence.
+  3. Average the criterion scores across the N_SAMPLES Head runs.
+  4. Select the rationale from the Head run whose final_score is closest to
+     the averaged final score (closest-rationale selection).
+  5. Final score = averaged; rationale = selected from closest run.
 
 Multi-sample averaging (research gap #5, arXiv:2606.26185): temp=0 does NOT
 fully eliminate variance in LLM judges due to floating-point non-determinism,
@@ -41,7 +34,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from .agent import build_head_agent, build_root_agent
-from ..programs import FELLOWSHIP_CONFIG, ProgramConfig
+from ..programs import ProgramConfig
 
 APP_NAME = "fellowship_review"
 
@@ -51,11 +44,12 @@ APP_NAME = "fellowship_review"
 # every row.
 DEFAULT_N_SAMPLES = 5
 # Cap LLM calls per sample:
-#   Fellowship: analyst + grader + 1 revision = 4 worst case.
-#   R2B verify loop: analyst + grader × 3 iterations = 6 worst case.
-#   R2B Head: 1 call per run × N_SAMPLES.
-MAX_LLM_CALLS_FELLOWSHIP = 4
-MAX_LLM_CALLS_R2B_VERIFY = 8
+#   Verify loop (R2B/Alchemist): analyst + grader × 3 iterations = 6 worst case.
+#   Verify loop (Fellowship V2): analyst + web_verifier + grader × 3 = 9
+#   worst case, plus google_search rounds inside web_verifier. 20 gives
+#   headroom for the search tool calls without being unbounded.
+#   Head: 1 call per run × N_SAMPLES.
+MAX_LLM_CALLS_R2B_VERIFY = 20
 MAX_LLM_CALLS_HEAD = 2
 
 
@@ -64,7 +58,7 @@ class AdkReviewWorkflow:
         self,
         analyzer_model: str,
         grader_model: str,
-        program_config: ProgramConfig = FELLOWSHIP_CONFIG,
+        program_config: ProgramConfig,
         head_model: str | None = None,
         n_samples: int = DEFAULT_N_SAMPLES,
     ):
@@ -127,54 +121,7 @@ class AdkReviewWorkflow:
         return parts
 
     # ------------------------------------------------------------------
-    # Fellowship path (single run, no multi-sample)
-    # ------------------------------------------------------------------
-
-    async def _run_fellowship(self, state: dict) -> dict:
-        """Single analyst->grader loop run. Byte-identical to original."""
-        session_service = InMemorySessionService()
-        runner = Runner(
-            app_name=APP_NAME,
-            agent=build_root_agent(
-                self.analyzer_model,
-                self.grader_model,
-                self.program_config,
-            ),
-            session_service=session_service,
-        )
-        session_id = uuid.uuid4().hex
-        user_id = state.get("row_id", "batch-user")
-        initial_state = {
-            **state,
-            "grader_feedback": "",
-            "attempt": 1,
-            "human_review_flag": False,
-        }
-        await session_service.create_session(
-            app_name=APP_NAME,
-            user_id=user_id,
-            session_id=session_id,
-            state=initial_state,
-        )
-        parts = self._build_parts(state)
-        async for _event in runner.run_async(
-            user_id=user_id,
-            session_id=session_id,
-            new_message=types.Content(role="user", parts=parts),
-            run_config=RunConfig(max_llm_calls=MAX_LLM_CALLS_FELLOWSHIP),
-        ):
-            pass
-        session = await session_service.get_session(
-            app_name=APP_NAME,
-            user_id=user_id,
-            session_id=session_id,
-        )
-        if session is None:
-            raise RuntimeError("ADK session disappeared before result collection.")
-        return dict(session.state)
-
-    # ------------------------------------------------------------------
-    # R2B path (verify loop once, then Head N_SAMPLES times)
+    # Verify loop (analyst -> grader, max 3 iterations)
     # ------------------------------------------------------------------
 
     async def _run_r2b_verify_loop(self, state: dict) -> dict:
@@ -229,13 +176,20 @@ class AdkReviewWorkflow:
         return dict(session.state)
 
     async def _run_head_once(
-        self, state: dict, approved_evidence: dict, sample_idx: int
+        self, state: dict, approved_evidence: dict, sample_idx: int,
+        web_verification_report: dict | None = None,
     ) -> dict:
         """Run the Head scorer once on the approved evidence.
 
         Returns the Head's R2BHeadScore output as a dict
         (criterion_scores, criterion_rationale, final_score, confidence, ...).
         Raises on failure (caller catches and excludes from average).
+
+        web_verification_report is the output of the web_verifier agent
+        (Fellowship V2 only). When provided, it is injected into session
+        state so the Head's instruction template ({web_verification_report})
+        resolves. When None (R2B/Alchemist), the Head instruction's
+        {web_verification_report} placeholder is not referenced.
         """
         session_service = InMemorySessionService()
         runner = Runner(
@@ -248,10 +202,14 @@ class AdkReviewWorkflow:
         # The Head sees the SAME approved evidence each run. We inject the
         # analyst_report into the session state so the Head's instruction
         # template ({analyst_report}) resolves to the approved evidence.
-        initial_state = {
+        # For Fellowship V2, we also inject web_verification_report so the
+        # Head can use verification tags (verified/unverified/contradicted).
+        initial_state: dict = {
             "analyst_report": approved_evidence,
             "sample_idx": sample_idx,
         }
+        if web_verification_report is not None:
+            initial_state["web_verification_report"] = web_verification_report
         await session_service.create_session(
             app_name=APP_NAME,
             user_id=user_id,
@@ -418,7 +376,7 @@ class AdkReviewWorkflow:
         }
 
     async def _run_r2b(self, state: dict) -> dict:
-        """R2B path: verify loop once, then Head N_SAMPLES times, average."""
+        """Verify loop once, then Head N_SAMPLES times, average."""
         # Step 1: verify loop (analyst -> grader, max 3 iterations).
         verify_state = await self._run_r2b_verify_loop(state)
 
@@ -456,10 +414,20 @@ class AdkReviewWorkflow:
                 "n_valid": 0,
             }
 
+        # For Fellowship V2 (uses_web_verification=True), the web_verifier
+        # ran inside the verify loop and stored its report in session state.
+        # Pass it to the Head so the Head's {web_verification_report}
+        # instruction template resolves. R2B/Alchemist have no such report.
+        web_verification_report = None
+        if self.program_config.uses_web_verification:
+            web_verification_report = verify_state.get("web_verification_report")
+
         samples = []
         for i in range(self.n_samples):
             try:
-                sample = await self._run_head_once(state, approved_evidence, i)
+                sample = await self._run_head_once(
+                    state, approved_evidence, i, web_verification_report
+                )
                 samples.append(sample)
             except Exception:
                 # A single Head sample failing (API error, schema validation)
@@ -485,9 +453,7 @@ class AdkReviewWorkflow:
 
     async def _invoke_async(self, state: dict) -> dict:
         """Run the review workflow and return final state with final_result."""
-        if self.program_config.uses_separate_head:
-            return await self._run_r2b(state)
-        return await self._run_fellowship(state)
+        return await self._run_r2b(state)
 
     def invoke(self, state: dict) -> dict:
         return asyncio.run(self._invoke_async(state))

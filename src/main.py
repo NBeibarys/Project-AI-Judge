@@ -11,7 +11,7 @@ from .pipeline import run_batch
 def main():
     # The maintained parser correctly handles quoting, escapes, and interpolation.
     load_dotenv(override=False)
-    program = os.environ.get("PROGRAM", "fellowship")
+    program = os.environ.get("PROGRAM", "fellowship_v2")
     config = Config.from_env(program)
     print(f"Running ADK batch [program={program}] against sheet {config.sheet_id}")
 

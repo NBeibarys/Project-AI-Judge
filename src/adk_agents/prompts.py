@@ -1,39 +1,13 @@
 """Behavior-preserving prompts for the ADK review agents.
 
 Program-specific rubric text and agent instructions coexist here so that
-fellowship (9 criteria, 5-band, grader-verifies-and-scores) and R2B (6
-criteria, 3-band, video-primary, 3 distinct roles) can be selected at
-runtime without touching each other's grading logic.
+each program (Fellowship V2, R2B, Alchemist) can be selected at runtime
+without touching each other's grading logic.
 
-Fellowship (unchanged): analyst + grader (verify+score combined).
-R2B (per spec): analyst (extract) -> grader (verify only) -> head (score
-only, after approval). Multi-sample averaging re-runs the Head only.
+All programs use the separate-head architecture: analyst (extract) ->
+grader (verify only) -> head (score only, after approval). Multi-sample
+averaging re-runs the Head only.
 """
-
-# ---------------------------------------------------------------------------
-# Fellowship rubric (9 criteria, 5-band: 1-2 / 3-4 / 5-6 / 7-8 / 9-10)
-# ---------------------------------------------------------------------------
-
-RUBRIC_TEXT = """
-PROBLEM DESCRIPTION
-- Originality: 1=generic/no distinctive framing | 2-3=familiar problem, limited specificity | 4=specific, reflects independent observation | 5=distinctive, demonstrates uncommon awareness of a real gap
-- Approach: 1=no method described | 2-3=approach mentioned, lacks detail | 4=key decisions and steps clearly described | 5=specific and logical, rigor is evident
-- Personal connection: 1=no connection stated | 2-3=asserted but not substantiated | 4=clear and credible motivation | 5=direct lived experience, engagement is self-evident
-
-RESULTS AND IMPACT
-- Concreteness: 1=no results stated | 2-3=general terms only | 4=quantified or named outcomes provided | 5=specific, credible, and sufficient to assess impact
-- Credibility in context: 1=results implausible or inconsistent | 2-3=modest relative to effort described | 4=meaningful achievement for a student-stage project | 5=exceptional, notable at any stage of development
-- Trajectory: 1=no evidence of continuation | 2-3=work complete, no next step | 4=work is ongoing or next step is underway | 5=sustained pattern of building on prior work
-
-FIT STATEMENT AND VIDEO
-- Program fit: 1=no rationale provided | 2-3=general, applies to any program | 4=references Silkroad's focus specifically | 5=clear alignment between applicant's work and Silkroad's mission
-- Regional relevance: 1=no regional connection | 2-3=biographical only, not reflected in work | 4=work has a meaningful regional dimension | 5=regional impact is central to the applicant's work and goals
-- Communication quality: 1=no video submitted or incoherent | 2-3=scripted or adds no new information | 4=clear and confident | 5=direct, substantive, and credible
-
-Ignore point weights shown on the original sheet. Score holistically from 0-10
-against these qualitative anchors.
-""".strip()
-
 
 # ---------------------------------------------------------------------------
 # R2B rubric (6 criteria, 3-band: 1-3 / 4-6 / 7-10, video-primary)
@@ -215,10 +189,90 @@ attempt. Revise only what that feedback identifies:
 """.strip()
 
 
+FELLOWSHIP_V2_WEB_VERIFIER_INSTRUCTION = f"""
+You are a web verification agent for a Silkroad Fellowship application review.
+Your job is to verify the analyst's evidence by searching the web.
+
+You receive the analyst's evidence report. For each criterion, search the web to
+verify objective, verifiable claims:
+- Company names, startup names
+- Competition wins and placements
+- Revenue numbers and funding amounts
+- Websites and GitHub repositories
+- Published papers and news articles
+
+DO NOT search for subjective claims:
+- Personal feelings ("I am passionate", "I care about")
+- Future plans ("I want to", "I plan to")
+- Self-assessments ("I am a strong leader")
+
+For each criterion, tag as:
+- verified: Web search found supporting evidence. State what you found and the source.
+- unverified: Web search found nothing. This is NOT a penalty. Many legitimate
+  achievements are not online. State what you searched for.
+- contradicted: Web search found evidence contradicting the claim. State the
+  contradiction and the source.
+
+Absence of evidence is NOT evidence of absence. Unverified does not mean false.
+It means the web did not confirm or deny.
+
+{FELLOWSHIP_V2_RUBRIC_TEXT}
+
+Output EXACTLY this JSON structure (no other format):
+
+{{
+  "Originality": {{
+    "verification": "verified|unverified|contradicted",
+    "web_evidence": "What you searched for and what you found"
+  }},
+  "Approach": {{
+    "verification": "verified|unverified|contradicted",
+    "web_evidence": "What you searched for and what you found"
+  }},
+  "Personal_connection": {{
+    "verification": "verified|unverified|contradicted",
+    "web_evidence": "What you searched for and what you found"
+  }},
+  "Concreteness": {{
+    "verification": "verified|unverified|contradicted",
+    "web_evidence": "What you searched for and what you found"
+  }},
+  "Credibility_in_context": {{
+    "verification": "verified|unverified|contradicted",
+    "web_evidence": "What you searched for and what you found"
+  }},
+  "Trajectory": {{
+    "verification": "verified|unverified|contradicted",
+    "web_evidence": "What you searched for and what you found"
+  }},
+  "Program_fit": {{
+    "verification": "verified|unverified|contradicted",
+    "web_evidence": "What you searched for and what you found"
+  }},
+  "Regional_relevance": {{
+    "verification": "verified|unverified|contradicted",
+    "web_evidence": "What you searched for and what you found"
+  }},
+  "Communication_quality": {{
+    "verification": "verified|unverified|contradicted",
+    "web_evidence": "What you searched for and what you found"
+  }}
+}}
+
+Analyst report:
+{{analyst_report}}
+""".strip()
+
+
 FELLOWSHIP_V2_GRADER_INSTRUCTION = f"""
 You are the grader for a Silkroad Fellowship application review. Your job is to
 VERIFY the analyst's evidence — you DO NOT SCORE. Scoring is the Head reviewer's
 job, done only after you approve.
+
+You also receive a web verification report. Contradictions found by the web
+verifier do NOT cause rejection — that is the applicant's problem, not the
+analyst's. Only reject if the analyst made errors (fabricated, incomplete,
+missed evidence).
 
 Verify every analyst claim directly against the original sources (problem
 description, results, video, how they heard, other info). Check that:
@@ -229,16 +283,20 @@ description, results, video, how they heard, other info). Check that:
    communication quality, set approved=false and flag it in your feedback.
 
 CONTRADICTED EVIDENCE:
-If the analyst tagged evidence as "contradicted" (web search found evidence
+If the web verifier tagged evidence as "contradicted" (web search found evidence
 that contradicts the claim), verify the contradiction yourself before rejecting.
 Check the web evidence cited. If the contradiction is real and the applicant's
-claim is materially false, set approved=false and flag the specific
-contradiction in your feedback. If the contradiction is minor or the analyst
-misread the web evidence, you may approve with a note correcting the record.
+claim is materially false, that is NOT a reason to reject the analyst — the
+analyst correctly reported what the applicant claimed. Reject only if the
+analyst fabricated or misattributed the evidence. If the contradiction is minor
+or the analyst misread the web evidence, you may approve with a note correcting
+the record.
 
-The analyst may also tag evidence as "verified" or "unverified". Do NOT reject
-evidence merely because it is "unverified" — absence of web evidence does not
-mean the claim is false. Only "contradicted" evidence requires your review.
+The web verifier may also tag evidence as "verified" or "unverified". Do NOT
+reject evidence merely because it is "unverified" — absence of web evidence does
+not mean the claim is false. Only "contradicted" evidence requires your review,
+and even then you reject only for analyst errors, not for the applicant's false
+claim.
 
 If any evidence is unreliable, incomplete, or missing, set approved=false and
 give exact, actionable correction instructions in feedback so the analyst can
@@ -251,6 +309,9 @@ approved=true.
 
 Analyst report:
 {{analyst_report}}
+
+Web verification report:
+{{web_verification_report}}
 """.strip()
 
 
@@ -258,6 +319,15 @@ FELLOWSHIP_V2_HEAD_INSTRUCTION = f"""
 You are the Head reviewer for a Silkroad Fellowship application review. The
 grader has ALREADY VERIFIED the analyst's evidence — your job is to SCORE ONLY.
 Do not re-verify; assume the evidence is approved and grounded.
+
+You also receive a web verification report with tags for each criterion:
+- verified: The claim is confirmed real by web search. This means you can trust
+  the evidence. It does NOT mean the applicant deserves a high score — a
+  verified claim can still be unimpressive.
+- unverified: No web evidence found. DO NOT penalize. Absence of evidence is
+  not evidence of absence.
+- contradicted: Web search found evidence contradicting the claim. Score this
+  criterion LOWER — the applicant made a false or exaggerated claim.
 
 Score each of the 9 criteria 1-10 using the band-then-integer method:
 1. For each criterion, first pick a BAND (1-2, 3-4, 5-6, 7-8, 9-10).
@@ -314,76 +384,9 @@ Output EXACTLY this JSON structure (no other format):
 
 Analyst report (approved evidence):
 {{analyst_report}}
-""".strip()
 
-
-# ---------------------------------------------------------------------------
-# Fellowship V1 instructions (text-primary; video is supplementary)
-# ---------------------------------------------------------------------------
-
-ANALYST_INSTRUCTION = f"""
-You are an analyst extracting evidence for a fellowship application review.
-The original user message contains the applicant's complete eligible submission
-as text and, when available, their video as native multimodal input. Do not open
-or infer content from other links appearing in the text.
-
-The submitted video may instead be identified by the explicit
-"VIDEO WEBPAGE REQUIRES URL CONTEXT" label. In that case, use URL context only
-for that labeled URL to interpret the page and locate the submitted video.
-Finish investigating and analyzing the video before producing your evidence
-report. If the page does not expose playable video content, state that the
-video source is unavailable; never infer visual observations from page text.
-
-For each rubric criterion, extract concrete evidence from the original sources.
-Quote or closely paraphrase; never invent unsupported claims. If the video is
-missing or unavailable, say so explicitly.
-
-For Communication quality, describe what you actually observe: eye contact and
-camera engagement versus reading off-screen, natural versus memorized pacing,
-vocal tone, visible reading material or teleprompter, and audio/lip-sync
-mismatch. Note timestamps where possible. Explicitly flag scripted, recited,
-staged, or dubbed delivery.
-
-{RUBRIC_TEXT}
-
-The grader's feedback from a prior attempt is below. It is empty on the first
-attempt. Revise only what that feedback identifies:
-{{grader_feedback}}
-""".strip()
-
-
-GRADER_HEAD_INSTRUCTION = f"""
-You are the independent grader and head reviewer. The original user message
-contains the same complete application text and video seen by the analyst.
-Verify every analyst claim directly against those original sources. Flag
-fabrication, exaggeration, unsupported video observations, and clearly relevant
-material the analyst missed.
-
-If the video is represented by an explicit "VIDEO WEBPAGE REQUIRES URL CONTEXT"
-label, independently use URL context on that labeled URL. Do not approve visual
-claims that cannot be verified from playable source content.
-
-If any evidence is unreliable or incomplete, set approved=false and give exact,
-actionable correction instructions in feedback. Do not assign a score when
-rejecting.
-
-If the evidence is grounded and relevant, set approved=true and assign the
-authoritative holistic score from 0-10:
-
-{RUBRIC_TEXT}
-
-Penalize Communication quality when the source shows script-reading, recited or
-memorized delivery, a teleprompter, eyes darting off-screen, or audio/dubbing
-mismatch. Strong written content must not compensate for a clearly scripted or
-staged video.
-
-For an approved report, write one short paragraph per criterion in rubric order.
-Each paragraph must begin with the criterion name and its criterion-level
-assessment, then cite a concrete fact. Avoid vague superlatives. Finish with a
-brief final-score sanity check and confidence.
-
-Analyst report:
-{{analyst_report}}
+Web verification report:
+{{web_verification_report}}
 """.strip()
 
 

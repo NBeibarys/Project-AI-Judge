@@ -24,7 +24,7 @@ from google.adk.agents import Agent, BaseAgent, InvocationContext, LoopAgent
 from google.adk.apps import App
 from google.adk.events import Event, EventActions
 from google.adk.models.google_llm import Gemini
-from google.adk.tools import url_context
+from google.adk.tools import google_search, url_context
 from google.genai import types
 
 from ..programs import ProgramConfig, get_program_config
@@ -34,6 +34,7 @@ from .schemas import (
     AnalystReport,
     FellowshipV2AnalystReport,
     FellowshipV2HeadScore,
+    FellowshipV2WebVerificationReport,
     R2BGraderVerdict,
     R2BHeadScore,
 )
@@ -141,6 +142,48 @@ class R2BApprovalGate(BaseAgent):
 # Agent builders.
 # ---------------------------------------------------------------------------
 
+def build_web_verifier_agent(
+    model: str,
+    program_config: ProgramConfig,
+) -> Agent:
+    """Build the web verification agent (Fellowship V2 only).
+
+    Runs between the analyst and the grader. Takes the analyst_report as
+    input (via the {analyst_report} template variable in its instruction)
+    and produces a FellowshipV2WebVerificationReport. The report is stored
+    under the output_key 'web_verification_report' in session state, so the
+    grader and head can reference it via {web_verification_report}.
+
+    This agent CAN use google_search: its output_schema is a simple flat
+    schema (FellowshipV2WebVerificationReport), not the complex
+    AnalystReport. The output_schema/google_search conflict that forced
+    google_search off the analyst does not apply here.
+    """
+    return Agent(
+        name="web_verifier",
+        description="Verifies analyst evidence via web search.",
+        model=Gemini(
+            model=model,
+            retry_options=types.HttpRetryOptions(
+                attempts=5,
+                exp_base=2,
+                initial_delay=2,
+                http_status_codes=[429],
+            ),
+        ),
+        generate_content_config=types.GenerateContentConfig(
+            temperature=GRADER_TEMPERATURE,
+            seed=DETERMINISM_SEED,
+            response_mime_type="application/json",
+        ),
+        instruction=program_config.web_verifier_instruction,
+        output_schema=FellowshipV2WebVerificationReport,
+        output_key="web_verification_report",
+        tools=[google_search],
+        timeout=240,
+    )
+
+
 def build_root_agent(
     analyzer_model: str,
     grader_model: str,
@@ -178,7 +221,12 @@ def build_root_agent(
         description="Extracts grounded rubric evidence from application text and video.",
         model=Gemini(
             model=analyzer_model,
-            retry_options=types.HttpRetryOptions(attempts=1),
+            retry_options=types.HttpRetryOptions(
+                attempts=5,
+                exp_base=2,
+                initial_delay=2,
+                http_status_codes=[429],
+            ),
         ),
         # Spec: all three agents (analyst, grader, head) run at temp=0.
         # The LLM-as-judge literature (arXiv:2603.28304, arXiv:2606.26185)
@@ -202,7 +250,12 @@ def build_root_agent(
         description="Verifies analyst evidence only. Does not score.",
         model=Gemini(
             model=grader_model,
-            retry_options=types.HttpRetryOptions(attempts=1),
+            retry_options=types.HttpRetryOptions(
+                attempts=5,
+                exp_base=2,
+                initial_delay=2,
+                http_status_codes=[429],
+            ),
         ),
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
@@ -216,10 +269,20 @@ def build_root_agent(
     )
     gate = R2BApprovalGate(name="approval_gate")
     max_iter = 3
+    # When the program uses web verification (Fellowship V2 only), insert the
+    # web_verifier agent between the analyst and the grader. Every iteration
+    # of the loop runs: analyst -> web_verifier -> grader -> gate. If the
+    # grader rejects, the loop returns to the analyst (web_verifier re-runs
+    # on the revised evidence). R2B and Alchemist keep the 3-agent pipeline.
+    if program_config.uses_web_verification:
+        web_verifier = build_web_verifier_agent(analyzer_model, program_config)
+        sub_agents = [analyst, web_verifier, grader, gate]
+    else:
+        sub_agents = [analyst, grader, gate]
     return LoopAgent(
         name=f"{program_config.program}_review",
         description="Analyst and grader review loop.",
-        sub_agents=[analyst, grader, gate],
+        sub_agents=sub_agents,
         max_iterations=max_iter,
     )
 
@@ -252,7 +315,12 @@ def build_head_agent(
         description="Scores approved evidence only. Does not verify.",
         model=Gemini(
             model=head_model,
-            retry_options=types.HttpRetryOptions(attempts=1),
+            retry_options=types.HttpRetryOptions(
+                attempts=5,
+                exp_base=2,
+                initial_delay=2,
+                http_status_codes=[429],
+            ),
         ),
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,

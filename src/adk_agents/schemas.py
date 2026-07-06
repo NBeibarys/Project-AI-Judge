@@ -1,26 +1,18 @@
 """Strict structured-response contracts for evidence extraction and grading.
 
-Fellowship and R2B use different grading contracts because their roles are
-structured differently:
+All programs use the separate-head architecture with 3 distinct roles:
 
-  Fellowship (original, unchanged):
-    - analyst  -> AnalystReport
-    - grader   -> GraderVerdict (verifies AND scores in one step)
-    Single output_schema per role; the active-criteria slot is the fellowship
-    default and never switches.
+  - analyst  -> AnalystReport      (extract evidence only, no score)
+  - grader   -> R2BGraderVerdict   (verify only: approve/reject + feedback)
+  - head     -> R2BHeadScore       (score only, after approval)
 
-  R2B (3 distinct roles per spec):
-    - analyst  -> AnalystReport      (extract evidence only, no score)
-    - grader   -> R2BGraderVerdict   (verify only: approve/reject + feedback)
-    - head     -> R2BHeadScore       (score only, after approval)
-    The grader never scores; the head never verifies. This separation is what
-    makes multi-sample averaging of the Head meaningful (research gap #5):
-    only the Head is re-run, on the SAME approved evidence.
+The grader never scores; the head never verifies. This separation is what
+makes multi-sample averaging of the Head meaningful (research gap #5):
+only the Head is re-run, on the SAME approved evidence.
 
-To support both programs without touching the fellowship grading path, the
-AnalystReport validator reads the active-criteria set from a module-level
-slot that ``set_active_criteria`` updates. Fellowship callers never call that
-setter, so the default behavior is unchanged.
+The AnalystReport validator reads the active-criteria set from a
+module-level slot that ``set_active_criteria`` updates. Each program sets
+its own criteria set at agent-build time.
 """
 from typing import Literal, Optional
 
@@ -110,6 +102,41 @@ class CriterionEvidence(BaseModel):
     verification: Optional[Literal["verified", "unverified", "contradicted"]] = None
 
 
+class WebVerificationEntry(BaseModel):
+    """Per-criterion web verification result produced by the web_verifier agent.
+
+    verification tags the analyst's evidence for a criterion:
+    - verified: web search found supporting evidence
+    - unverified: web search found nothing (NOT a penalty)
+    - contradicted: web search found evidence contradicting the claim
+    web_evidence states what was found (or, for 'unverified', what was searched).
+    """
+    model_config = ConfigDict(extra="forbid")
+    verification: Literal["verified", "unverified", "contradicted"]
+    web_evidence: str = Field(min_length=1)
+
+
+class FellowshipV2WebVerificationReport(BaseModel):
+    """Flat web verification report for all 9 Fellowship criteria.
+
+    Produced by the dedicated web_verifier agent (runs between analyst and
+    grader). Same explicit-named-field pattern as FellowshipV2AnalystReport
+    so Gemini knows exactly what keys to fill. This schema is intentionally
+    flat (not the complex AnalystReport) so it has NO output_schema conflict
+    with google_search — the agent can use the google_search tool freely.
+    """
+    model_config = ConfigDict(extra="forbid")
+    Originality: WebVerificationEntry
+    Approach: WebVerificationEntry
+    Personal_connection: WebVerificationEntry
+    Concreteness: WebVerificationEntry
+    Credibility_in_context: WebVerificationEntry
+    Trajectory: WebVerificationEntry
+    Program_fit: WebVerificationEntry
+    Regional_relevance: WebVerificationEntry
+    Communication_quality: WebVerificationEntry
+
+
 class FellowshipV2AnalystReport(BaseModel):
     """Explicit schema with all 9 Fellowship criteria as named fields.
 
@@ -164,45 +191,6 @@ class AnalystReport(BaseModel):
                 f"missing={sorted(required - supplied)}, "
                 f"unexpected={sorted(supplied - required)}"
             )
-        return self
-
-
-# ---------------------------------------------------------------------------
-# Fellowship grader contract (original, unchanged): verify + score in one.
-# ---------------------------------------------------------------------------
-
-class GraderVerdict(BaseModel):
-    """A rejection carries feedback; an approval carries a complete grade.
-
-    This is the fellowship contract: the grader both verifies and scores in a
-    single step. R2B does NOT use this — R2B splits verify and score across
-    two agents (R2BGraderVerdict + R2BHeadScore).
-    """
-    model_config = ConfigDict(extra="forbid")
-    approved: bool
-    feedback: str = ""
-    score: Optional[float] = Field(default=None, ge=0, le=10)
-    reasoning: Optional[str] = None
-    confidence: Optional[Literal["low", "medium", "high"]] = None
-
-    @model_validator(mode="after")
-    def enforce_decision_contract(self) -> "GraderVerdict":
-        """Prevent contradictory model output from reaching Sheets."""
-        if self.approved:
-            if self.score is None or not (self.reasoning or "").strip():
-                raise ValueError("approved verdicts require score and reasoning")
-            if self.confidence is None:
-                raise ValueError("approved verdicts require confidence")
-        else:
-            if not self.feedback.strip():
-                raise ValueError("rejected verdicts require actionable feedback")
-            if any(
-                value is not None
-                for value in (self.score, self.reasoning, self.confidence)
-            ):
-                raise ValueError(
-                    "rejected verdicts must not include score, reasoning, or confidence"
-                )
         return self
 
 
