@@ -94,23 +94,15 @@ class AdkReviewWorkflow:
                     )
                 )
             else:
-                # No MIME type provided. Default to video/mp4 for gs:// URIs
-                # (Vertex AI requires a MIME type for Cloud Storage files).
-                # For YouTube URLs, Part.from_uri handles it natively.
+                # No MIME type provided. Default to video/mp4 for all URIs
+                # (Vertex AI requires a MIME type for file_data).
                 uri = state["video_url"]
-                if uri.startswith("gs://"):
-                    parts.append(
-                        types.Part.from_uri(
-                            file_uri=uri,
-                            mime_type="video/mp4",
-                        )
+                parts.append(
+                    types.Part.from_uri(
+                        file_uri=uri,
+                        mime_type="video/mp4",
                     )
-                else:
-                    parts.append(
-                        types.Part(
-                            file_data=types.FileData(file_uri=uri)
-                        )
-                    )
+                )
         text = state.get("raw_row_text", "")
         if state.get("video_requires_url_context"):
             text += (
