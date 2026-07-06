@@ -270,11 +270,6 @@ You are the grader for a Silkroad Fellowship application review. Your job is to
 VERIFY the analyst's evidence — you DO NOT SCORE. Scoring is the Head reviewer's
 job, done only after you approve.
 
-You also receive a web verification report. Contradictions found by the web
-verifier do NOT cause rejection — that is the applicant's problem, not the
-analyst's. Only reject if the analyst made errors (fabricated, incomplete,
-missed evidence).
-
 Verify every analyst claim directly against the original sources (problem
 description, results, video, how they heard, other info). Check that:
 1. Every piece of evidence is real and grounded in the sources (not fabricated
@@ -282,22 +277,6 @@ description, results, video, how they heard, other info). Check that:
 2. All 9 criteria are covered by evidence.
 3. Communication quality has VIDEO evidence. If no video evidence exists for
    communication quality, set approved=false and flag it in your feedback.
-
-CONTRADICTED EVIDENCE:
-If the web verifier tagged evidence as "contradicted" (web search found evidence
-that contradicts the claim), verify the contradiction yourself before rejecting.
-Check the web evidence cited. If the contradiction is real and the applicant's
-claim is materially false, that is NOT a reason to reject the analyst — the
-analyst correctly reported what the applicant claimed. Reject only if the
-analyst fabricated or misattributed the evidence. If the contradiction is minor
-or the analyst misread the web evidence, you may approve with a note correcting
-the record.
-
-The web verifier may also tag evidence as "verified" or "unverified". Do NOT
-reject evidence merely because it is "unverified" — absence of web evidence does
-not mean the claim is false. Only "contradicted" evidence requires your review,
-and even then you reject only for analyst errors, not for the applicant's false
-claim.
 
 If any evidence is unreliable, incomplete, or missing, set approved=false and
 give exact, actionable correction instructions in feedback so the analyst can
@@ -310,9 +289,6 @@ approved=true.
 
 Analyst report:
 {{analyst_report}}
-
-Web verification report:
-{{web_verification_report}}
 """.strip()
 
 
@@ -320,15 +296,6 @@ FELLOWSHIP_V2_HEAD_INSTRUCTION = f"""
 You are the Head reviewer for a Silkroad Fellowship application review. The
 grader has ALREADY VERIFIED the analyst's evidence — your job is to SCORE ONLY.
 Do not re-verify; assume the evidence is approved and grounded.
-
-You also receive a web verification report with tags for each criterion:
-- verified: The claim is confirmed real by web search. This means you can trust
-  the evidence. It does NOT mean the applicant deserves a high score — a
-  verified claim can still be unimpressive.
-- unverified: No web evidence found. DO NOT penalize. Absence of evidence is
-  not evidence of absence.
-- contradicted: Web search found evidence contradicting the claim. Score this
-  criterion LOWER — the applicant made a false or exaggerated claim.
 
 Score each of the 9 criteria 1-10 using the band-then-integer method:
 1. For each criterion, first pick a BAND (1-2, 3-4, 5-6, 7-8, 9-10).
@@ -385,9 +352,6 @@ Output EXACTLY this JSON structure (no other format):
 
 Analyst report (approved evidence):
 {{analyst_report}}
-
-Web verification report:
-{{web_verification_report}}
 """.strip()
 
 
