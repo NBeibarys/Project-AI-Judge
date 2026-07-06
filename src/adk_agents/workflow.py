@@ -414,13 +414,9 @@ class AdkReviewWorkflow:
                 "n_valid": 0,
             }
 
-        # For Fellowship V2 (uses_web_verification=True), the web_verifier
-        # ran inside the verify loop and stored its report in session state.
-        # Pass it to the Head so the Head's {web_verification_report}
-        # instruction template resolves. R2B/Alchemist have no such report.
+        # Web verifier was removed (3-agent pipeline). Set to None so
+        # _run_head_once skips injecting it into session state.
         web_verification_report = None
-        if self.program_config.uses_web_verification:
-            web_verification_report = verify_state.get("web_verification_report")
 
         samples = []
         for i in range(self.n_samples):

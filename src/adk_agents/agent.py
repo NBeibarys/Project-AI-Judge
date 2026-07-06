@@ -179,6 +179,8 @@ def build_web_verifier_agent(
         instruction=program_config.web_verifier_instruction,
         output_schema=FellowshipV2WebVerificationReport,
         output_key="web_verification_report",
+        # output_key kept for backward compat but web verifier is no longer
+        # in the LoopAgent. See git history for the experiment.
         tools=[google_search],
         timeout=240,
     )
