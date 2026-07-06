@@ -15,11 +15,13 @@ def main():
     config = Config.from_env(program)
     print(f"Running ADK batch [program={program}] against sheet {config.sheet_id}")
 
-    result = run_batch(config)
+    # FORCE=1 regrades every row even if the checkpoint marks it done.
+    force = os.environ.get("FORCE", "").lower() in {"1", "true", "yes"}
+    result = run_batch(config, force=force)
     graded = result["graded"]
     errors = result["errors"]
 
-    print(f"Graded: {len(graded)} | Errors: {len(errors)}")
+    print(f"Graded: {len(graded)} | Errors: {len(errors)} (force={force})")
     for row_id, err in errors.items():
         print(f"  FAILED {row_id}: {err}")
 
