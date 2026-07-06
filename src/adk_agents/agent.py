@@ -36,7 +36,7 @@ from google.adk.tools import url_context
 from google.genai import types
 
 from ..programs import FELLOWSHIP_CONFIG, ProgramConfig
-from .schemas import AnalystReport, GraderVerdict, R2BGraderVerdict, R2BHeadScore
+from .schemas import AnalystReport, FellowshipV2AnalystReport, FellowshipV2HeadScore, GraderVerdict, R2BGraderVerdict, R2BHeadScore
 
 # Grader/Head/Analyst temperature: the LLM-as-judge literature
 # (arXiv:2603.28304, arXiv:2606.26185) recommends low temperature for both
@@ -218,6 +218,15 @@ def build_root_agent(
     averaging without re-running the expensive analyst->grader loop.
     """
     program_config.apply_active_criteria()
+
+    # Use explicit schema with named criteria fields for Fellowship V2
+    # so Gemini knows exactly what keys to fill. Generic dict[str, ...]
+    # produces empty results because the model doesn't know the keys.
+    if program_config.program == "fellowship_v2":
+        analyst_schema = FellowshipV2AnalystReport
+    else:
+        analyst_schema = AnalystReport
+
     analyst = Agent(
         name="analyst",
         description="Extracts grounded rubric evidence from application text and video.",
@@ -232,9 +241,10 @@ def build_root_agent(
         # variance that temp=0 cannot fully eliminate.
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
+            response_mime_type="application/json",
         ),
         instruction=program_config.analyst_instruction,
-        output_schema=AnalystReport,
+        output_schema=analyst_schema,
         output_key="analyst_report",
         tools=[url_context],
         timeout=240,
@@ -296,6 +306,13 @@ def build_head_agent(
     scores, selecting rationale from the run closest to the average.
     """
     program_config.apply_active_criteria()
+
+    # Use explicit schema with named criteria fields for Fellowship V2
+    if program_config.program == "fellowship_v2":
+        head_schema = FellowshipV2HeadScore
+    else:
+        head_schema = R2BHeadScore
+
     return Agent(
         name="head",
         description="Scores approved evidence only. Does not verify.",
@@ -305,9 +322,10 @@ def build_head_agent(
         ),
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
+            response_mime_type="application/json",
         ),
         instruction=program_config.head_instruction,
-        output_schema=R2BHeadScore,
+        output_schema=head_schema,
         output_key="head_score",
         tools=[url_context],
         timeout=240,

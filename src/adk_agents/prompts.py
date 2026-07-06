@@ -138,6 +138,53 @@ staged, or dubbed delivery.
 
 {FELLOWSHIP_V2_RUBRIC_TEXT}
 
+You DO NOT SCORE. You only extract evidence. Do not assign numbers or evaluate
+quality. Just report what the applicant said, showed, or demonstrated.
+
+Output EXACTLY this JSON structure (no other format):
+
+{{
+  "criteria": {{
+    "Originality": {{
+      "evidence": "What the applicant said/did related to originality of the problem",
+      "notes": "Additional context or observations"
+    }},
+    "Approach": {{
+      "evidence": "What the applicant said/did related to their approach/method",
+      "notes": "Additional context or observations"
+    }},
+    "Personal connection": {{
+      "evidence": "What the applicant said/did showing personal connection",
+      "notes": "Additional context or observations"
+    }},
+    "Concreteness": {{
+      "evidence": "Specific, quantified outcomes the applicant mentioned",
+      "notes": "Additional context or observations"
+    }},
+    "Credibility in context": {{
+      "evidence": "Evidence that the results are credible for their stage",
+      "notes": "Additional context or observations"
+    }},
+    "Trajectory": {{
+      "evidence": "Evidence of continuation, next steps, or ongoing work",
+      "notes": "Additional context or observations"
+    }},
+    "Program fit": {{
+      "evidence": "What the applicant said about fit with Silkroad",
+      "notes": "Additional context or observations"
+    }},
+    "Regional relevance": {{
+      "evidence": "Regional connection mentioned by the applicant",
+      "notes": "Additional context or observations"
+    }},
+    "Communication quality": {{
+      "evidence": "Observations about video delivery, clarity, confidence",
+      "notes": "Additional context or observations"
+    }}
+  }},
+  "missing_sources": []
+}}
+
 The grader's feedback from a prior attempt is below. It is empty on the first
 attempt. Revise only what that feedback identifies:
 {{grader_feedback}}
@@ -201,6 +248,33 @@ by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
 override_reasoning).
 
 {FELLOWSHIP_V2_RUBRIC_TEXT}
+
+Output EXACTLY this JSON structure (no other format):
+
+{{
+  "Originality": <integer 1-10>,
+  "Approach": <integer 1-10>,
+  "Personal_connection": <integer 1-10>,
+  "Concreteness": <integer 1-10>,
+  "Credibility_in_context": <integer 1-10>,
+  "Trajectory": <integer 1-10>,
+  "Program_fit": <integer 1-10>,
+  "Regional_relevance": <integer 1-10>,
+  "Communication_quality": <integer 1-10>,
+  "Originality_rationale": "<your rationale BEFORE the score>",
+  "Approach_rationale": "<your rationale>",
+  "Personal_connection_rationale": "<your rationale>",
+  "Concreteness_rationale": "<your rationale>",
+  "Credibility_in_context_rationale": "<your rationale>",
+  "Trajectory_rationale": "<your rationale>",
+  "Program_fit_rationale": "<your rationale>",
+  "Regional_relevance_rationale": "<your rationale>",
+  "Communication_quality_rationale": "<your rationale>",
+  "final_score": <float, average of 9 scores>,
+  "override": 0.0,
+  "override_reasoning": "",
+  "confidence": "low|medium|high"
+}}
 
 Analyst report (approved evidence):
 {{analyst_report}}

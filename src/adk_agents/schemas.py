@@ -87,6 +87,43 @@ class CriterionEvidence(BaseModel):
     notes: str = Field(min_length=1)
 
 
+class FellowshipV2AnalystReport(BaseModel):
+    """Explicit schema with all 9 Fellowship criteria as named fields.
+
+    This is sent to Gemini as response_schema so the model knows exactly
+    what keys to fill. The generic dict[str, CriterionEvidence] in
+    AnalystReport doesn't convey the required keys to the model.
+    """
+    model_config = ConfigDict(extra="forbid")
+    Originality: CriterionEvidence
+    Approach: CriterionEvidence
+    Personal_connection: CriterionEvidence
+    Concreteness: CriterionEvidence
+    Credibility_in_context: CriterionEvidence
+    Trajectory: CriterionEvidence
+    Program_fit: CriterionEvidence
+    Regional_relevance: CriterionEvidence
+    Communication_quality: CriterionEvidence
+    missing_sources: list[str] = Field(default_factory=list)
+
+    def to_analyst_report(self) -> "AnalystReport":
+        """Convert to the generic AnalystReport format for downstream agents."""
+        return AnalystReport(
+            criteria={
+                "Originality": self.Originality,
+                "Approach": self.Approach,
+                "Personal connection": self.Personal_connection,
+                "Concreteness": self.Concreteness,
+                "Credibility in context": self.Credibility_in_context,
+                "Trajectory": self.Trajectory,
+                "Program fit": self.Program_fit,
+                "Regional relevance": self.Regional_relevance,
+                "Communication quality": self.Communication_quality,
+            },
+            missing_sources=self.missing_sources,
+        )
+
+
 class AnalystReport(BaseModel):
     """Exactly one evidence record for every approved rubric criterion."""
     model_config = ConfigDict(extra="forbid")
@@ -170,6 +207,69 @@ class R2BGraderVerdict(BaseModel):
             # must not include scores — scoring is the Head's job.
             pass
         return self
+
+
+class FellowshipV2HeadScore(BaseModel):
+    """Explicit Head scorer schema with all 9 Fellowship criteria as named fields.
+
+    Same purpose as R2BHeadScore but with explicit field names so Gemini
+    knows exactly what keys to fill. Generic dict[str, int] produces empty
+    results because the model doesn't know the criterion names.
+    """
+    model_config = ConfigDict(extra="forbid")
+    Originality: int = Field(ge=1, le=10)
+    Approach: int = Field(ge=1, le=10)
+    Personal_connection: int = Field(ge=1, le=10)
+    Concreteness: int = Field(ge=1, le=10)
+    Credibility_in_context: int = Field(ge=1, le=10)
+    Trajectory: int = Field(ge=1, le=10)
+    Program_fit: int = Field(ge=1, le=10)
+    Regional_relevance: int = Field(ge=1, le=10)
+    Communication_quality: int = Field(ge=1, le=10)
+    Originality_rationale: str = Field(min_length=1)
+    Approach_rationale: str = Field(min_length=1)
+    Personal_connection_rationale: str = Field(min_length=1)
+    Concreteness_rationale: str = Field(min_length=1)
+    Credibility_in_context_rationale: str = Field(min_length=1)
+    Trajectory_rationale: str = Field(min_length=1)
+    Program_fit_rationale: str = Field(min_length=1)
+    Regional_relevance_rationale: str = Field(min_length=1)
+    Communication_quality_rationale: str = Field(min_length=1)
+    final_score: float = Field(ge=1, le=10)
+    override: float = Field(default=0.0, ge=-1.0, le=1.0)
+    override_reasoning: str = ""
+    confidence: Literal["low", "medium", "high"]
+
+    def to_head_score(self) -> "R2BHeadScore":
+        """Convert to the generic R2BHeadScore format for averaging."""
+        return R2BHeadScore(
+            criterion_scores={
+                "Originality": self.Originality,
+                "Approach": self.Approach,
+                "Personal connection": self.Personal_connection,
+                "Concreteness": self.Concreteness,
+                "Credibility in context": self.Credibility_in_context,
+                "Trajectory": self.Trajectory,
+                "Program fit": self.Program_fit,
+                "Regional relevance": self.Regional_relevance,
+                "Communication quality": self.Communication_quality,
+            },
+            criterion_rationale={
+                "Originality": self.Originality_rationale,
+                "Approach": self.Approach_rationale,
+                "Personal connection": self.Personal_connection_rationale,
+                "Concreteness": self.Concreteness_rationale,
+                "Credibility in context": self.Credibility_in_context_rationale,
+                "Trajectory": self.Trajectory_rationale,
+                "Program fit": self.Program_fit_rationale,
+                "Regional relevance": self.Regional_relevance_rationale,
+                "Communication quality": self.Communication_quality_rationale,
+            },
+            final_score=self.final_score,
+            override=self.override,
+            override_reasoning=self.override_reasoning,
+            confidence=self.confidence,
+        )
 
 
 class R2BHeadScore(BaseModel):
