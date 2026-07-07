@@ -110,15 +110,20 @@ def _upload_to_gemini_files_api(
     local_path: str,
     mime_type: Optional[str],
 ) -> str:
-    """Upload a local file to the Gemini Files API and return its file URI.
+    """Upload a local file and return a URI for the workflow.
 
-    Polls until the file state is ACTIVE. Raises VideoResolutionError on
-    upload failure or timeout. The returned URI is passed to the workflow
-    as a ResolvedVideo.uri; the workflow constructs a Part.from_uri with it.
+    On the Developer API (API key): uses the Gemini Files API, polls until
+    ACTIVE, and returns the file URI. The Files API auto-expires after 48h.
 
-    The Files API auto-expires uploaded objects after 48 hours, so callers
-    do not need to delete them — see pipeline.py for the rationale.
+    On Vertex AI: the Files API is not available. Instead, returns the local
+    file path with a file:// prefix so the workflow can load it as
+    Part.from_bytes (inline data). This avoids GCS entirely.
     """
+    # Vertex AI mode: return local path for inline upload.
+    if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true":
+        return f"file://{local_path}"
+
+    # Developer API mode: use Files API.
     from google import genai
 
     client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))

@@ -76,37 +76,44 @@ class AdkReviewWorkflow:
     # Shared helpers
     # ------------------------------------------------------------------
 
-    def _build_parts(self, state: dict) -> list[types.Part]:
-        """Build the multimodal input parts for an agent run."""
+    def _build_parts(self, state: dict) -> list:
+        """Build the multimodal input parts for an agent run.
+
+        Handles two URI schemes:
+        - https://generativelanguage.googleapis.com/... (Files API, Developer API)
+          → Part.from_uri
+        - file:///local/path (Vertex AI inline, avoids GCS)
+          → Part.from_bytes (read file content into memory)
+        """
         parts = []
         if state.get("video_url") and not state.get("video_requires_url_context"):
-            mime_type = state.get("video_mime_type")
-            if mime_type:
-                parts.append(
-                    types.Part.from_uri(
-                        file_uri=state["video_url"],
-                        mime_type=mime_type,
-                    )
-                )
+            mime_type = state.get("video_mime_type", "video/mp4")
+            uri = state["video_url"]
+            if uri.startswith("file://"):
+                # Vertex AI: read local file as inline bytes.
+                local_path = uri.replace("file://", "", 1)
+                with open(local_path, "rb") as f:
+                    parts.append(types.Part.from_bytes(
+                        data=f.read(), mime_type=mime_type,
+                    ))
             else:
-                # No MIME type provided. Default to video/mp4 for all URIs
-                # (Vertex AI requires a MIME type for file_data).
-                uri = state["video_url"]
-                parts.append(
-                    types.Part.from_uri(
-                        file_uri=uri,
-                        mime_type="video/mp4",
-                    )
-                )
+                parts.append(types.Part.from_uri(
+                    file_uri=uri, mime_type=mime_type,
+                ))
         # Alchemist: pitch deck PDF as a multimodal Part (required source).
         if state.get("pitch_deck_url"):
             deck_mime = state.get("pitch_deck_mime_type", "application/pdf")
-            parts.append(
-                types.Part.from_uri(
-                    file_uri=state["pitch_deck_url"],
-                    mime_type=deck_mime,
-                )
-            )
+            deck_uri = state["pitch_deck_url"]
+            if deck_uri.startswith("file://"):
+                local_path = deck_uri.replace("file://", "", 1)
+                with open(local_path, "rb") as f:
+                    parts.append(types.Part.from_bytes(
+                        data=f.read(), mime_type=deck_mime,
+                    ))
+            else:
+                parts.append(types.Part.from_uri(
+                    file_uri=deck_uri, mime_type=deck_mime,
+                ))
         text = state.get("raw_row_text", "")
         if state.get("video_requires_url_context"):
             text += (
