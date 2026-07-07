@@ -345,7 +345,9 @@ def ingest_pitch_deck(
             f"Pitch deck download failed: {type(exc).__name__}: {exc}"
         ) from exc
     finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        # Keep temp file on Vertex AI (file:// URI needs it for all agent calls).
+        if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() != "true":
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
