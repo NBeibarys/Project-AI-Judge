@@ -262,7 +262,7 @@ def process_row(
                         for c in config.program_config.criteria
                     },
                 }),
-                "human_review_flag": False,
+                "human_review_flag": True,
                 "skipped_no_pitch_deck": True,
             }
         initial_state["submitted_pitch_deck_url"] = submitted_pitch_deck_url
