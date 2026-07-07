@@ -18,20 +18,17 @@ service-account email (the same one the Sheet is shared with). If it is
 not, the download 404s and the caller treats it as "no video" — criterion 6
 (Presentation & Clarity) then scores 1 with rationale "No video submitted."
 
-Backend limitation: the Gemini Files API is available on the Developer API
-(GOOGLE_API_KEY) only; it is NOT supported on Vertex AI (which uses gs://
-URIs instead). When GOOGLE_GENAI_USE_VERTEXAI=TRUE, this module skips the
-upload path and falls back to the Tier-1 resolver — so on Vertex, Drive
-videos that aren't separately staged in GCS score criterion 6 as 1. The
-operator should run R2B against the Developer API for full Drive support.
+Backend: this module uses the Gemini Files API (Developer API / API key)
+exclusively. The Files API auto-expires uploaded objects after 48 hours,
+so no explicit cleanup is needed. The previous Vertex AI / GCS upload
+path has been removed — the project no longer carries GCP billing
+dependencies (no Cloud Storage, no Vertex AI).
 """
 import os
+import re
 import tempfile
 import time
-import uuid
 from typing import Optional
-
-from google.oauth2 import service_account
 
 from .google_clients import extract_drive_file_id
 from .video_urls import (
@@ -50,16 +47,17 @@ FILES_API_POLL_INTERVAL_SECONDS = 3
 DOWNLOAD_CHUNK_BYTES = 10 * 1024 * 1024
 
 
-def _is_vertex_backend() -> bool:
-    return os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "FALSE").upper() == "TRUE"
-
-
 def _drive_service(service_account_path: str):
     """Build a Drive v3 client with readonly scope from the service account.
 
     The Sheets service account uses the 'spreadsheets' scope; Drive needs
     'drive.readonly'. We build a separate credential from the same JSON.
     The file must be shared with the service-account email to be readable.
+
+    Imports are local because googleapiclient is only needed on the Drive
+    download path; keeping them local avoids importing google.auth and
+    googleapiclient at module load when the caller only ever hits the
+    HTTPS/Files-API path (the common case for R2B with YouTube links).
     """
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
@@ -112,11 +110,14 @@ def _upload_to_gemini_files_api(
     local_path: str,
     mime_type: Optional[str],
 ) -> str:
-    """Upload a local video to the Gemini Files API and return its file URI.
+    """Upload a local file to the Gemini Files API and return its file URI.
 
     Polls until the file state is ACTIVE. Raises VideoResolutionError on
     upload failure or timeout. The returned URI is passed to the workflow
     as a ResolvedVideo.uri; the workflow constructs a Part.from_uri with it.
+
+    The Files API auto-expires uploaded objects after 48 hours, so callers
+    do not need to delete them — see pipeline.py for the rationale.
     """
     from google import genai
 
@@ -150,32 +151,6 @@ def _upload_to_gemini_files_api(
     raise VideoResolutionError("Gemini Files API upload timed out (5 min).")
 
 
-def _upload_to_gcs(local_path: str, service_account_path: str) -> tuple[str, str]:
-    """Upload a local video to Google Cloud Storage and return (gs:// URI, mime_type).
-
-    Vertex AI reads gs:// URIs directly - no Files API needed. The video is
-    uploaded to the VIDEO_STAGING_BUCKET bucket with a unique name and
-    the gs:// URI is returned for passing to Gemini via Part.from_uri.
-    """
-    from google.cloud import storage
-    import mimetypes
-
-    creds = service_account.Credentials.from_service_account_file(
-        service_account_path,
-        scopes=["https://www.googleapis.com/auth/devstorage.read_write"],
-    )
-    client = storage.Client(credentials=creds)
-    bucket = client.bucket("VIDEO_STAGING_BUCKET")
-    blob_name = f"videos/{uuid.uuid4().hex}.mp4"
-    blob = bucket.blob(blob_name)
-    blob.upload_from_filename(local_path)
-
-    # Always use video/mp4 - mimetypes.guess_type() misdetects video files
-    # as application/x-msdos-program when the extension is ambiguous.
-    # Gemini accepts video/mp4 for all common video formats.
-    return f"gs://VIDEO_STAGING_BUCKET/{blob_name}", "video/mp4"
-
-
 def _temp_video_path(url: str) -> str:
     """Allocate a temp path with a best-effort extension from the URL."""
     ext = ""
@@ -203,11 +178,6 @@ def ingest_video_for_r2b(
     resolves to a webpage, falls back to Tier-2: download the source (Google
     Drive via the Drive API, or direct HTTPS) and upload to the Gemini Files
     API, returning a ResolvedVideo whose uri is the Files API file URI.
-
-    On Vertex AI (where the Files API is unavailable), Tier-2 is skipped —
-    the function returns whatever Tier-1 produced (including a webpage
-    requiring url_context, or raises if Tier-1 hard-failed). Drive videos
-    that aren't separately staged in GCS will then score criterion 6 as 1.
     """
     # Tier 1 first.
     resolved: Optional[ResolvedVideo] = None
@@ -215,18 +185,19 @@ def ingest_video_for_r2b(
         resolved = resolve_video_url(submitted_url)
         # If Tier-1 resolved to a YouTube URL, use it directly.
         # If it resolved to a Drive/download URL, we need to download and
-        # upload to GCS (Vertex AI can't fetch these URLs directly).
+        # upload to the Files API (the model cannot fetch these URLs
+        # directly: Drive serves an HTML interstitial or requires auth).
         if not resolved.requires_url_context and "youtube" not in resolved.uri and "youtu.be" not in resolved.uri:
             # Non-YouTube URL that Tier-1 thinks is directly fetchable.
-            # On Vertex AI, these often fail (robots.txt, Drive auth).
-            # Force download + GCS upload for reliability.
+            # These often fail in practice (robots.txt, Drive auth).
+            # Force download + Files API upload for reliability.
             pass
         elif not resolved.requires_url_context:
             return resolved
     except VideoResolutionError:
         resolved = None
 
-    # Tier 2 needs the Files API or GCS. On Vertex AI, use GCS upload.
+    # Tier 2: Google Drive link → download via Drive API → Files API upload.
     drive_id = extract_drive_file_id(submitted_url)
     if drive_id:
         tmp_path = _temp_video_path(submitted_url)
@@ -237,12 +208,8 @@ def ingest_video_for_r2b(
                 raise VideoResolutionError(
                     "Drive video exceeds the 2GB size limit."
                 )
-            if _is_vertex_backend():
-                uri, mime = _upload_to_gcs(tmp_path, service_account_path)
-                return ResolvedVideo(uri=uri, mime_type=mime, source="drive_upload")
-            else:
-                uri = _upload_to_gemini_files_api(tmp_path, mime_type=None)
-                return ResolvedVideo(uri=uri, mime_type=None, source="drive_upload")
+            uri = _upload_to_gemini_files_api(tmp_path, mime_type=None)
+            return ResolvedVideo(uri=uri, mime_type=None, source="drive_upload")
         except VideoResolutionError:
             raise
         except Exception as exc:
@@ -260,12 +227,8 @@ def ingest_video_for_r2b(
         tmp_path = _temp_video_path(submitted_url)
         try:
             _download_https(resolved.uri, tmp_path)
-            if _is_vertex_backend():
-                uri, mime = _upload_to_gcs(tmp_path, service_account_path)
-                return ResolvedVideo(uri=uri, mime_type=mime, source="https_upload")
-            else:
-                uri = _upload_to_gemini_files_api(tmp_path, mime_type=None)
-                return ResolvedVideo(uri=uri, mime_type=None, source="https_upload")
+            uri = _upload_to_gemini_files_api(tmp_path, mime_type=None)
+            return ResolvedVideo(uri=uri, mime_type=None, source="https_upload")
         except VideoResolutionError:
             raise
         except Exception as exc:
@@ -303,8 +266,6 @@ def _is_google_slides_url(url: str) -> bool:
 
 def _slides_export_url(url: str) -> str:
     """Convert a Google Slides URL to its PDF export endpoint."""
-    import re
-
     match = re.search(r"/presentation/d/([a-zA-Z0-9_-]+)", url)
     if not match:
         raise VideoResolutionError(
@@ -312,6 +273,16 @@ def _slides_export_url(url: str) -> str:
         )
     pres_id = match.group(1)
     return f"https://docs.google.com/presentation/d/{pres_id}/export/pdf"
+
+
+def _temp_pitch_deck_path(url: str) -> str:
+    """Allocate a temp path with a .pdf suffix for pitch deck downloads."""
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=".pdf", delete=False, dir=tempfile.gettempdir(),
+    )
+    path = tmp.name
+    tmp.close()
+    return path
 
 
 def ingest_pitch_deck(
@@ -326,9 +297,10 @@ def ingest_pitch_deck(
       - Google Drive file links (drive.google.com/... or open?id=...)
         — downloaded via the Drive API (same path as video ingestion).
 
-    On Vertex AI, the downloaded PDF is uploaded to GCS and a gs:// URI is
-    returned. On the Developer API, the Gemini Files API is used instead.
-    The returned ResolvedVideo carries mime_type=application/pdf.
+    The downloaded PDF is uploaded to the Gemini Files API and the file
+    URI is returned. The Files API auto-expires the object after 48 hours,
+    so no cleanup is needed. The returned ResolvedVideo carries
+    mime_type=application/pdf.
     """
     tmp_path = _temp_pitch_deck_path(submitted_url)
 
@@ -352,12 +324,8 @@ def ingest_pitch_deck(
                     "Pitch deck exceeds the 2GB size limit."
                 )
 
-        if _is_vertex_backend():
-            uri, mime = _upload_pitch_deck_to_gcs(tmp_path, service_account_path)
-            return ResolvedVideo(uri=uri, mime_type=mime, source="pitch_deck_upload")
-        else:
-            uri = _upload_to_gemini_files_api(tmp_path, mime_type=PITCH_DECK_MIME_TYPE)
-            return ResolvedVideo(uri=uri, mime_type=PITCH_DECK_MIME_TYPE, source="pitch_deck_upload")
+        uri = _upload_to_gemini_files_api(tmp_path, mime_type=PITCH_DECK_MIME_TYPE)
+        return ResolvedVideo(uri=uri, mime_type=PITCH_DECK_MIME_TYPE, source="pitch_deck_upload")
 
     except VideoResolutionError:
         raise
@@ -370,35 +338,3 @@ def ingest_pitch_deck(
             os.unlink(tmp_path)
         except OSError:
             pass
-
-
-def _temp_pitch_deck_path(url: str) -> str:
-    """Allocate a temp path with a .pdf suffix for pitch deck downloads."""
-    tmp = tempfile.NamedTemporaryFile(
-        suffix=".pdf", delete=False, dir=tempfile.gettempdir(),
-    )
-    path = tmp.name
-    tmp.close()
-    return path
-
-
-def _upload_pitch_deck_to_gcs(local_path: str, service_account_path: str) -> tuple[str, str]:
-    """Upload a local pitch deck PDF to Google Cloud Storage and return (gs:// URI, mime_type).
-
-    Same pattern as _upload_to_gcs but for PDF pitch decks. The file is
-    uploaded to the VIDEO_STAGING_BUCKET bucket (shared with videos)
-    with a unique name and the gs:// URI is returned for passing to Gemini
-    via Part.from_uri.
-    """
-    from google.cloud import storage
-
-    creds = service_account.Credentials.from_service_account_file(
-        service_account_path,
-        scopes=["https://www.googleapis.com/auth/devstorage.read_write"],
-    )
-    client = storage.Client(credentials=creds)
-    bucket = client.bucket("VIDEO_STAGING_BUCKET")
-    blob_name = f"pitch_decks/{uuid.uuid4().hex}.pdf"
-    blob = bucket.blob(blob_name)
-    blob.upload_from_filename(local_path)
-    return f"gs://VIDEO_STAGING_BUCKET/{blob_name}", PITCH_DECK_MIME_TYPE

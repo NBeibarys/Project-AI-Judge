@@ -17,9 +17,6 @@ import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
-from google.cloud import storage
-from google.oauth2 import service_account
-
 from .checkpoint import Checkpoint
 from .config import Config
 from .adk_agents import AdkReviewWorkflow
@@ -126,35 +123,6 @@ def _is_drive_url(url: str) -> bool:
     """
     host = (urlparse(url).hostname or "").lower().rstrip(".")
     return host in _DRIVE_HOSTS
-
-
-def _cleanup_gcs_object(video_url: str, service_account_path: str) -> None:
-    """Delete a video uploaded to GCS by Tier-2 ingestion.
-
-    Tier-2 uploads videos to gs://VIDEO_STAGING_BUCKET/ so Vertex AI can
-    read them as file_data. Once grading is complete for the row the object
-    is no longer needed — deleting it avoids unbounded storage cost growth
-    across batches. This is best-effort: a delete failure is logged but does
-    not affect the grade already written to the sheet. Only gs:// URIs are
-    candidates; Files API (https://) URIs expire on their own.
-    """
-    if not video_url or not video_url.startswith("gs://"):
-        return
-    try:
-        creds = service_account.Credentials.from_service_account_file(
-            service_account_path,
-            scopes=["https://www.googleapis.com/auth/devstorage.read_write"],
-        )
-        client = storage.Client(credentials=creds)
-        parsed = urlparse(video_url)
-        bucket = client.bucket(parsed.netloc)
-        blob = bucket.blob(parsed.path.lstrip("/"))
-        blob.delete()
-    except Exception:
-        # Storage cleanup must never mask a successful grade. The grade is
-        # already written to the sheet at this point; a leaked object costs
-        # a few cents and can be swept by a bucket lifecycle rule instead.
-        pass
 
 
 def _submitted_pitch_deck_url(header: list, row: list) -> str:
@@ -315,15 +283,10 @@ def process_row(
         reasoning = f"[NEEDS HUMAN REVIEW] {reasoning}"
         score = ""
 
-    # Tier-2 ingestion uploads videos to GCS (gs://) for Vertex AI. The grade
-    # is now computed and written by the caller, so the staged object is no
-    # longer needed — delete it to avoid storage costs accumulating across
-    # batches. Best-effort: a failure here does not affect the grade. Only
-    # gs:// URIs are deleted; Files API (https://) URIs expire on their own.
-    _cleanup_gcs_object(
-        initial_state.get("video_url", ""),
-        config.service_account_path,
-    )
+    # No GCS cleanup is needed: Tier-2 now uploads exclusively to the Gemini
+    # Files API, which auto-expires objects after 48 hours. The previous
+    # Vertex AI / GCS upload path (and its gs:// cleanup) has been removed
+    # along with all GCP billing dependencies.
 
     # The caller owns completion because only it observes the Sheets commit.
     return row_id, {
