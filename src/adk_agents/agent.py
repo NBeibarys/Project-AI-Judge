@@ -24,6 +24,7 @@ from google.adk.agents import Agent, BaseAgent, InvocationContext, LoopAgent
 from google.adk.apps import App
 from google.adk.events import Event, EventActions
 from google.adk.models.google_llm import Gemini
+from google.genai import Client as GenAIClient
 from google.adk.tools import google_search, url_context
 from google.genai import types
 
@@ -45,6 +46,26 @@ from .schemas import (
 # (hence multi-sample averaging of the Head), but it reduces run-to-run
 # jitter. Per spec all three agents run at temp=0.
 GRADER_TEMPERATURE = 0.0
+
+# Override Gemini's api_client to use the Developer API (API key) instead
+# of Vertex AI. When GOOGLE_API_KEY is set, all ADK Gemini calls route
+# through the Developer API, avoiding GCP billing entirely.
+_DEVELOPER_CLIENT = None
+if os.environ.get("GOOGLE_API_KEY"):
+    _DEVELOPER_CLIENT = GenAIClient(api_key=os.environ["GOOGLE_API_KEY"])
+
+class DeveloperGemini(Gemini):
+    """Gemini subclass that uses the Developer API via API key.
+
+    Falls back to the default Gemini (Vertex AI) when GOOGLE_API_KEY is
+    not set, preserving backward compatibility with Vertex deployments.
+    """
+
+    @property
+    def api_client(self):
+        if _DEVELOPER_CLIENT is not None:
+            return _DEVELOPER_CLIENT
+        return super().api_client
 
 # Determinism seed: Gemini supports a seed parameter so that the same input
 # produces the same output across runs. This makes the multi-sample Head
@@ -171,7 +192,7 @@ def build_web_verifier_agent(
     return Agent(
         name="web_verifier",
         description="Verifies analyst evidence via web search.",
-        model=Gemini(
+        model=DeveloperGemini(
             model=model,
             retry_options=types.HttpRetryOptions(
                 attempts=5,
@@ -231,7 +252,7 @@ def build_root_agent(
     analyst = Agent(
         name="analyst",
         description="Extracts grounded rubric evidence from application text and video.",
-        model=Gemini(
+        model=DeveloperGemini(
             model=analyzer_model,
             retry_options=types.HttpRetryOptions(
                 attempts=5,
@@ -261,7 +282,7 @@ def build_root_agent(
     grader = Agent(
         name="grader",
         description="Verifies analyst evidence only. Does not score.",
-        model=Gemini(
+        model=DeveloperGemini(
             model=grader_model,
             retry_options=types.HttpRetryOptions(
                 attempts=5,
@@ -322,7 +343,7 @@ def build_head_agent(
     return Agent(
         name="head",
         description="Scores approved evidence only. Does not verify.",
-        model=Gemini(
+        model=DeveloperGemini(
             model=head_model,
             retry_options=types.HttpRetryOptions(
                 attempts=5,
