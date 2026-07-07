@@ -97,13 +97,20 @@ def _supports_server_side_tool_invocations(model: str) -> bool:
 
 
 def _build_tool_config(model: str) -> types.ToolConfig | None:
-    """Build the ToolConfig appropriate for the model.
+    """Build the ToolConfig appropriate for the model and API mode.
 
     Gemini 3.x on the Developer API needs include_server_side_tool_invocations
     to combine built-in tools with function calling. Gemini 2.x does not
-    support that flag and rejects it, so None is returned (the API tolerates
-    built-in tools + function calling without the flag on 2.x).
+    support that flag and rejects it, so None is returned.
+
+    Vertex AI does NOT support include_server_side_tool_invocations at all
+    (it's a Developer API-only parameter). On Vertex, return None regardless
+    of model version — Vertex handles built-in tools + function calling
+    without the flag.
     """
+    # Vertex AI mode: never use this flag (Enterprise Agent Platform rejects it).
+    if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true":
+        return None
     if _supports_server_side_tool_invocations(model):
         return types.ToolConfig(
             include_server_side_tool_invocations=True,
@@ -219,7 +226,7 @@ def build_web_verifier_agent(
     return Agent(
         name="web_verifier",
         description="Verifies analyst evidence via web search.",
-        model=DeveloperGemini(
+        model=Gemini(
             model=model,
             retry_options=types.HttpRetryOptions(
                 attempts=5,
@@ -284,7 +291,7 @@ def build_root_agent(
     analyst = Agent(
         name="analyst",
         description="Extracts grounded rubric evidence from application text and video.",
-        model=DeveloperGemini(
+        model=Gemini(
             model=analyzer_model,
             retry_options=types.HttpRetryOptions(
                 attempts=5,
@@ -314,7 +321,7 @@ def build_root_agent(
     grader = Agent(
         name="grader",
         description="Verifies analyst evidence only. Does not score.",
-        model=DeveloperGemini(
+        model=Gemini(
             model=grader_model,
             retry_options=types.HttpRetryOptions(
                 attempts=5,
@@ -375,7 +382,7 @@ def build_head_agent(
     return Agent(
         name="head",
         description="Scores approved evidence only. Does not verify.",
-        model=DeveloperGemini(
+        model=Gemini(
             model=head_model,
             retry_options=types.HttpRetryOptions(
                 attempts=5,
