@@ -147,7 +147,7 @@ def write_row_result(
         start_idx, end_idx = sorted([score_idx, reasoning_idx])
         start_col, end_col = _col_letter(start_idx + 1), _col_letter(end_idx + 1)
         ordered_values = [None, None]
-        ordered_values[score_idx - start_idx] = score
+        ordered_values[score_idx - start_idx] = str(score) if score is not None else ""
         ordered_values[reasoning_idx - start_idx] = reasoning
         sheets_service.spreadsheets().values().update(
             spreadsheetId=sheet_id,
