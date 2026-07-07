@@ -18,6 +18,7 @@ not the whole analyst->grader loop (expensive).
 """
 import json
 import os
+import re
 from collections.abc import AsyncGenerator
 
 from google.adk.agents import Agent, BaseAgent, InvocationContext, LoopAgent
@@ -74,14 +75,40 @@ class DeveloperGemini(Gemini):
 # audit. Same seed for all three agents (analyst, grader, head).
 DETERMINISM_SEED = 7524
 
-# All agents use built-in tools (url_context / google_search) alongside
-# output_schema (structured JSON via function calling). The Gemini API
-# requires tool_config.include_server_side_tool_invocations=True when a
-# built-in tool is combined with function calling, otherwise it rejects
-# the request with 400 INVALID_ARGUMENT.
-TOOL_CONFIG = types.ToolConfig(
-    include_server_side_tool_invocations=True,
-)
+# On the Developer API (API key), the ADK routes output_schema through the
+# SetModelResponseTool (function calling) path because
+# can_use_output_schema_with_tools() returns False for non-Vertex. When a
+# built-in tool (url_context, google_search) is combined with that function
+# declaration, the Developer API requires
+# tool_config.include_server_side_tool_invocations=True, otherwise it rejects
+# the request with 400: "Please enable tool_config
+# .include_server_side_tool_invocations to use Built-in tools with Function
+# calling." That config is needed on Gemini 3.x, but 2.x models reject it
+# with 400: "Tool call context circulation is not enabled for models/gemini-
+# 2.x". So the tool config must be model-aware.
+_GEMINI_3_PLUS_RE = re.compile(r"^gemini-(\d+)\.")
+
+
+def _supports_server_side_tool_invocations(model: str) -> bool:
+    """True for Gemini 3.x+ (Developer API requires this flag for built-in
+    tools + function calling). False for 2.x, which rejects it."""
+    match = _GEMINI_3_PLUS_RE.match(model)
+    return bool(match and int(match.group(1)) >= 3)
+
+
+def _build_tool_config(model: str) -> types.ToolConfig | None:
+    """Build the ToolConfig appropriate for the model.
+
+    Gemini 3.x on the Developer API needs include_server_side_tool_invocations
+    to combine built-in tools with function calling. Gemini 2.x does not
+    support that flag and rejects it, so None is returned (the API tolerates
+    built-in tools + function calling without the flag on 2.x).
+    """
+    if _supports_server_side_tool_invocations(model):
+        return types.ToolConfig(
+            include_server_side_tool_invocations=True,
+        )
+    return None
 
 
 def _as_dict(value) -> dict:
@@ -204,8 +231,13 @@ def build_web_verifier_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             seed=DETERMINISM_SEED,
-            response_mime_type="application/json",
-            tool_config=TOOL_CONFIG,
+            # response_mime_type is intentionally omitted: the ADK's
+            # set_output_schema sets it when the model supports response_schema
+            # directly (Vertex AI). On the Developer API (API key), the ADK
+            # uses the SetModelResponseTool (function calling) path instead,
+            # and response_mime_type=application/json CONFLICTS with function
+            # calling, causing 400 INVALID_ARGUMENT.
+            tool_config=_build_tool_config(model),
         ),
         instruction=program_config.web_verifier_instruction,
         output_schema=FellowshipV2WebVerificationReport,
@@ -268,9 +300,9 @@ def build_root_agent(
         # variance that temp=0 cannot fully eliminate.
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
-            response_mime_type="application/json",
             seed=DETERMINISM_SEED,
-            tool_config=TOOL_CONFIG,
+            # response_mime_type omitted — see web_verifier comment above.
+            tool_config=_build_tool_config(analyzer_model),
         ),
         instruction=program_config.analyst_instruction,
         output_schema=analyst_schema,
@@ -294,7 +326,7 @@ def build_root_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             seed=DETERMINISM_SEED,
-            tool_config=TOOL_CONFIG,
+            tool_config=_build_tool_config(grader_model),
         ),
         instruction=program_config.grader_instruction,
         output_schema=R2BGraderVerdict,
@@ -354,9 +386,9 @@ def build_head_agent(
         ),
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
-            response_mime_type="application/json",
             seed=DETERMINISM_SEED,
-            tool_config=TOOL_CONFIG,
+            # response_mime_type omitted — see web_verifier comment above.
+            tool_config=_build_tool_config(head_model),
         ),
         instruction=program_config.head_instruction,
         output_schema=head_schema,

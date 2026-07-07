@@ -10,13 +10,23 @@ The grader never scores; the head never verifies. This separation is what
 makes multi-sample averaging of the Head meaningful (research gap #5):
 only the Head is re-run, on the SAME approved evidence.
 
+NOTE: These schemas intentionally do NOT use Pydantic's ``extra="forbid"``.
+That config emits ``additionalProperties: false`` in the generated JSON
+schema, which the genai SDK serializes as ``additional_properties``. The
+Gemini Developer API (API key) rejects this field with 400
+INVALID_ARGUMENT ("Unknown name 'additional_properties'"); Vertex AI
+accepted it. The ``model_validator`` decorators on AnalystReport,
+R2BGraderVerdict, and R2BHeadScore enforce the rubric contract at
+validation time, so extra-field rejection at the schema level is not
+required.
+
 The AnalystReport validator reads the active-criteria set from a
 module-level slot that ``set_active_criteria`` updates. Each program sets
 its own criteria set at agent-build time.
 """
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # Fellowship rubric (unchanged — the default active set)
@@ -89,7 +99,6 @@ def get_active_criteria() -> tuple[str, ...]:
 
 class CriterionEvidence(BaseModel):
     """Grounded evidence and the qualification needed to interpret it."""
-    model_config = ConfigDict(extra="forbid")
     evidence: str = Field(min_length=1)
     notes: str = Field(min_length=1)
     # Web verification tag (Fellowship V2 + Alchemist analysts only).
@@ -111,7 +120,6 @@ class WebVerificationEntry(BaseModel):
     - contradicted: web search found evidence contradicting the claim
     web_evidence states what was found (or, for 'unverified', what was searched).
     """
-    model_config = ConfigDict(extra="forbid")
     verification: Literal["verified", "unverified", "contradicted"]
     web_evidence: str = Field(min_length=1)
 
@@ -125,7 +133,6 @@ class FellowshipV2WebVerificationReport(BaseModel):
     flat (not the complex AnalystReport) so it has NO output_schema conflict
     with google_search — the agent can use the google_search tool freely.
     """
-    model_config = ConfigDict(extra="forbid")
     Originality: WebVerificationEntry
     Approach: WebVerificationEntry
     Personal_connection: WebVerificationEntry
@@ -144,7 +151,6 @@ class FellowshipV2AnalystReport(BaseModel):
     what keys to fill. The generic dict[str, CriterionEvidence] in
     AnalystReport doesn't convey the required keys to the model.
     """
-    model_config = ConfigDict(extra="forbid")
     Originality: CriterionEvidence
     Approach: CriterionEvidence
     Personal_connection: CriterionEvidence
@@ -176,7 +182,6 @@ class FellowshipV2AnalystReport(BaseModel):
 
 class AnalystReport(BaseModel):
     """Exactly one evidence record for every approved rubric criterion."""
-    model_config = ConfigDict(extra="forbid")
     criteria: dict[str, CriterionEvidence]
     missing_sources: list[str] = Field(default_factory=list)
 
@@ -205,7 +210,6 @@ class R2BGraderVerdict(BaseModel):
     6 criteria (with video evidence for criterion 6). approve=false carries
     actionable feedback for the analyst to revise.
     """
-    model_config = ConfigDict(extra="forbid")
     approved: bool
     feedback: str = ""
 
@@ -227,7 +231,6 @@ class FellowshipV2HeadScore(BaseModel):
     knows exactly what keys to fill. Generic dict[str, int] produces empty
     results because the model doesn't know the criterion names.
     """
-    model_config = ConfigDict(extra="forbid")
     Originality: int = Field(ge=1, le=10)
     Approach: int = Field(ge=1, le=10)
     Personal_connection: int = Field(ge=1, le=10)
@@ -291,7 +294,6 @@ class AlchemistAnalystReport(BaseModel):
     generic dict[str, CriterionEvidence] in AnalystReport doesn't convey
     the required keys to the model.
     """
-    model_config = ConfigDict(extra="forbid")
     Product_MVP_Innovation: CriterionEvidence
     Market_Potential: CriterionEvidence
     Scalability_US_Market: CriterionEvidence
@@ -319,7 +321,6 @@ class AlchemistHeadScore(BaseModel):
     requires rationale for every criterion before the score (rationale-before-
     score CoT). Includes a minor ±1.0 override with written reasoning.
     """
-    model_config = ConfigDict(extra="forbid")
     Product_MVP_Innovation: int = Field(ge=1, le=10)
     Market_Potential: int = Field(ge=1, le=10)
     Scalability_US_Market: int = Field(ge=1, le=10)
@@ -368,7 +369,6 @@ class R2BHeadScore(BaseModel):
     slot via get_active_criteria() so the same schema enforces the right set
     regardless of program.
     """
-    model_config = ConfigDict(extra="forbid")
     criterion_scores: dict[str, int]
     criterion_rationale: dict[str, str]
     final_score: float = Field(ge=1, le=10)
