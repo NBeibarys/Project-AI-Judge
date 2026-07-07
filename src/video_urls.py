@@ -39,7 +39,6 @@ MAX_METADATA_HTML_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 5
 METADATA_TIMEOUT_SECONDS = 15
 YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
-ABSOLUTE_HTTPS_URL = re.compile(r'https://[^"\'<>\s\\\\]+')
 
 
 class VideoResolutionError(ValueError):
@@ -231,27 +230,6 @@ class _VideoMetadataParser(HTMLParser):
     def handle_data(self, data):
         if self._json_ld:
             self._json_ld_chunks.append(data)
-        # Some players publish media configuration in executable page data
-        # instead of standards-based tags. Extract candidate URLs generically;
-        # deterministic metadata validation decides whether each is video.
-        normalized = (
-            data.replace("\\u003d", "=")
-            .replace("\\u0026", "&")
-            .replace("\\/", "/")
-        )
-        for match in ABSOLUTE_HTTPS_URL.finditer(normalized):
-            context = normalized[max(0, match.start() - 512) : match.start()]
-            declared_mime = next(
-                (
-                    mime
-                    for mime in SUPPORTED_VIDEO_MIME_TYPES
-                    if mime in context
-                ),
-                None,
-            )
-            self.candidates.append(
-                (match.group(0), declared_mime, "page-config:url")
-            )
 
     def handle_endtag(self, tag):
         if tag.lower() != "script" or not self._json_ld:
@@ -352,8 +330,8 @@ def resolve_video_url(
     if page_or_media.html:
         parser = _VideoMetadataParser(page_or_media.final_url)
         parser.feed(page_or_media.html)
-        # Declared video types and recognizable video paths are tried before
-        # generic page-configuration URLs to minimize outbound metadata probes.
+        # Declared video types are tried before undeclared ones to minimize
+        # outbound metadata probes.
         candidates = sorted(
             dict.fromkeys(parser.candidates),
             key=lambda item: (

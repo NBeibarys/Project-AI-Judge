@@ -184,16 +184,21 @@ def process_row(
         # are ingested as native multimodal Parts for every program, not just
         # R2B. The path is:
         #   1. Tier-1 (resolve_video_url) — cheap, no download; covers
-        #      YouTube natively and direct HTTPS videos ≤100MB.
-        #   2. If Tier-1 returns requires_url_context=True OR the URL is a
-        #      Google Drive link, fall back to Tier-2 (ingest_video_for_r2b)
-        #      which downloads via the Drive API and uploads to GCS/Files API
-        #      so the analyst receives the video as a native Part.
-        #   3. If Tier-2 also fails, record video_error; the workflow surfaces
+        #      YouTube natively, direct HTTPS videos ≤100MB, and webpages
+        #      with discoverable video metadata (og:video / <video> / JSON-LD).
+        #   2. If Tier-1 fails outright, or the URL is a Google Drive link,
+        #      fall back to Tier-2 (ingest_video_for_r2b) which downloads via
+        #      the Drive API and uploads to Files API / inline bytes so the
+        #      analyst receives the video as a native Part.
+        #   3. If Tier-1 resolves to requires_url_context=True (a webpage with
+        #      no discoverable direct video — e.g. Canva, Loom share pages),
+        #      that result is used as-is: the analyst's url_context tool reads
+        #      the page live. Tier-2 must NOT download and re-upload that
+        #      webpage — it isn't video data, and disguising HTML as a video
+        #      Part sends garbage input to Gemini instead of an honest
+        #      "can't resolve this video" (see video_ingestion.py docstring).
+        #   4. If Tier-2 also fails, record video_error; the workflow surfaces
         #      "VIDEO UNAVAILABLE: ..." to the analyst.
-        # This preserves R2B's existing behavior (it already used Tier-2)
-        # and fixes Fellowship V2, where Drive links previously resolved to a
-        # webpage the analyst could never actually watch.
         resolved_video: ResolvedVideo | None = None
         try:
             resolved_video = resolve_video_url(submitted_video_url)
@@ -202,7 +207,6 @@ def process_row(
 
         needs_tier2 = (
             resolved_video is None
-            or resolved_video.requires_url_context
             or _is_drive_url(submitted_video_url)
         )
         if needs_tier2:

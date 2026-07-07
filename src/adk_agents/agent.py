@@ -413,8 +413,8 @@ _default_program_config = get_program_config(
     os.environ.get("PROGRAM", "fellowship_v2")
 )
 root_agent = build_root_agent(
-    os.environ.get("ANALYZER_MODEL", "gemini-3.5-flash"),
-    os.environ.get("GRADER_MODEL", "gemini-3.5-flash"),
+    os.environ.get("ANALYZER_MODEL", "gemini-3.1-flash-lite"),
+    os.environ.get("GRADER_MODEL", "gemini-3.1-flash-lite"),
     _default_program_config,
 )
 app = App(name="adk_agents", root_agent=root_agent)

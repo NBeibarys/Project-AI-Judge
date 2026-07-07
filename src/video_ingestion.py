@@ -4,13 +4,16 @@ API so the analyst/grader receive the video as a native multimodal Part.
 
 Scope of this module:
   - Google Drive share links (download via Drive API → Files API upload)
-  - Direct HTTPS videos that Tier-1 rejected as too large or as a webpage
-    requiring url_context (download via urllib → Files API upload)
 
-What stays on the Tier-1 resolver (video_urls.resolve_video_url):
+What stays on the Tier-1 resolver (video_urls.resolve_video_url) and is
+never downloaded here:
   - Public YouTube URLs (native Gemini input, no download)
   - Direct HTTPS video ≤100MB with a known MIME
-  - Webpages with discoverable og:video / <video> / JSON-LD metadata
+  - Webpages with no discoverable direct video (requires_url_context=True,
+    e.g. Canva/Loom share pages) — handed to the analyst's url_context tool
+    to read live, never downloaded as if it were video data. A page's HTML
+    is not a video file; disguising one as the other sends Gemini garbage
+    input instead of an honest "video unavailable."
 
 Auth: the Drive download reuses the same service-account JSON as Sheets,
 but with the drive.readonly scope. The Drive file MUST be shared with the
@@ -230,26 +233,12 @@ def ingest_video_for_r2b(
                 except OSError:
                     pass
 
-    # Tier 2: direct HTTPS download (for large files Tier-1 rejected).
-    if resolved is not None and resolved.requires_url_context:
-        tmp_path = _temp_video_path(submitted_url)
-        try:
-            _download_https(resolved.uri, tmp_path)
-            uri = _upload_to_gemini_files_api(tmp_path, mime_type="video/mp4")
-            return ResolvedVideo(uri=uri, mime_type="video/mp4", source="https_upload")
-        except VideoResolutionError:
-            raise
-        except Exception as exc:
-            raise VideoResolutionError(
-                f"Direct video download failed: {type(exc).__name__}"
-            ) from exc
-        finally:
-            # Keep temp file on Vertex AI (file:// URI needs it for all agent calls).
-            if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() != "true":
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+    # No direct-HTTPS-download fallback here: if resolve_video_url() only
+    # found a webpage (requires_url_context=True), that URL is not video
+    # data — the caller keeps it as a Tier-1 result for the analyst's
+    # url_context tool to read live instead of calling this function at all.
+    # Downloading such a webpage and re-uploading it labeled "video/mp4"
+    # previously sent raw HTML to Gemini disguised as a video file.
 
     # Nothing worked. Surface a clear error so the pipeline scores
     # criterion 6 as 1 with rationale "No video submitted."
@@ -295,6 +284,19 @@ def _temp_pitch_deck_path(url: str) -> str:
     return path
 
 
+def _looks_like_pdf(path: str) -> bool:
+    """Reject downloads that aren't actually a PDF.
+
+    A non-Slides, non-Drive pitch deck URL (e.g. a Canva share page) has no
+    guaranteed export endpoint — _download_https happily fetches whatever is
+    at that URL, which is often the page's HTML, not a PDF. Checking the PDF
+    magic bytes turns that into an honest "deck unavailable" instead of
+    uploading HTML to Gemini mislabeled application/pdf.
+    """
+    with open(path, "rb") as f:
+        return f.read(5) == b"%PDF-"
+
+
 def ingest_pitch_deck(
     submitted_url: str,
     service_account_path: str,
@@ -333,6 +335,12 @@ def ingest_pitch_deck(
                 raise VideoResolutionError(
                     "Pitch deck exceeds the 2GB size limit."
                 )
+
+        if not _looks_like_pdf(tmp_path):
+            raise VideoResolutionError(
+                "Downloaded pitch deck is not a valid PDF — the source URL "
+                "may not offer a direct export (e.g. a Canva share page)."
+            )
 
         uri = _upload_to_gemini_files_api(tmp_path, mime_type=PITCH_DECK_MIME_TYPE)
         return ResolvedVideo(uri=uri, mime_type=PITCH_DECK_MIME_TYPE, source="pitch_deck_upload")
