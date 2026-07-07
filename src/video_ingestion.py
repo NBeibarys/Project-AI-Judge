@@ -157,14 +157,13 @@ def _upload_to_gemini_files_api(
 
 
 def _temp_video_path(url: str) -> str:
-    """Allocate a temp path with a best-effort extension from the URL."""
-    ext = ""
-    if "." in url:
-        candidate = url.rsplit(".", 1)[-1].split("/")[0].split("?")[0].lower()
-        if candidate and candidate.isalnum() and len(candidate) <= 5:
-            ext = "." + candidate
+    """Allocate a temp path with a video extension.
+
+    Always uses .mp4 because extracting extensions from URLs is unreliable
+    (e.g. https://example.com/video returns .com as extension).
+    """
     tmp = tempfile.NamedTemporaryFile(
-        suffix=ext or ".mp4", delete=False, dir=tempfile.gettempdir(),
+        suffix=".mp4", delete=False, dir=tempfile.gettempdir(),
     )
     path = tmp.name
     tmp.close()
@@ -213,8 +212,8 @@ def ingest_video_for_r2b(
                 raise VideoResolutionError(
                     "Drive video exceeds the 2GB size limit."
                 )
-            uri = _upload_to_gemini_files_api(tmp_path, mime_type=None)
-            return ResolvedVideo(uri=uri, mime_type=None, source="drive_upload")
+            uri = _upload_to_gemini_files_api(tmp_path, mime_type="video/mp4")
+            return ResolvedVideo(uri=uri, mime_type="video/mp4", source="drive_upload")
         except VideoResolutionError:
             raise
         except Exception as exc:
@@ -236,8 +235,8 @@ def ingest_video_for_r2b(
         tmp_path = _temp_video_path(submitted_url)
         try:
             _download_https(resolved.uri, tmp_path)
-            uri = _upload_to_gemini_files_api(tmp_path, mime_type=None)
-            return ResolvedVideo(uri=uri, mime_type=None, source="https_upload")
+            uri = _upload_to_gemini_files_api(tmp_path, mime_type="video/mp4")
+            return ResolvedVideo(uri=uri, mime_type="video/mp4", source="https_upload")
         except VideoResolutionError:
             raise
         except Exception as exc:
