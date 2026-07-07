@@ -53,6 +53,15 @@ GRADER_TEMPERATURE = 0.0
 # audit. Same seed for all three agents (analyst, grader, head).
 DETERMINISM_SEED = 7524
 
+# All agents use built-in tools (url_context / google_search) alongside
+# output_schema (structured JSON via function calling). The Gemini API
+# requires tool_config.include_server_side_tool_invocations=True when a
+# built-in tool is combined with function calling, otherwise it rejects
+# the request with 400 INVALID_ARGUMENT.
+TOOL_CONFIG = types.ToolConfig(
+    include_server_side_tool_invocations=True,
+)
+
 
 def _as_dict(value) -> dict:
     if hasattr(value, "model_dump"):
@@ -175,6 +184,7 @@ def build_web_verifier_agent(
             temperature=GRADER_TEMPERATURE,
             seed=DETERMINISM_SEED,
             response_mime_type="application/json",
+            tool_config=TOOL_CONFIG,
         ),
         instruction=program_config.web_verifier_instruction,
         output_schema=FellowshipV2WebVerificationReport,
@@ -239,6 +249,7 @@ def build_root_agent(
             temperature=GRADER_TEMPERATURE,
             response_mime_type="application/json",
             seed=DETERMINISM_SEED,
+            tool_config=TOOL_CONFIG,
         ),
         instruction=program_config.analyst_instruction,
         output_schema=analyst_schema,
@@ -262,6 +273,7 @@ def build_root_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             seed=DETERMINISM_SEED,
+            tool_config=TOOL_CONFIG,
         ),
         instruction=program_config.grader_instruction,
         output_schema=R2BGraderVerdict,
@@ -323,6 +335,7 @@ def build_head_agent(
             temperature=GRADER_TEMPERATURE,
             response_mime_type="application/json",
             seed=DETERMINISM_SEED,
+            tool_config=TOOL_CONFIG,
         ),
         instruction=program_config.head_instruction,
         output_schema=head_schema,
