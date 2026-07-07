@@ -222,10 +222,14 @@ def ingest_video_for_r2b(
                 f"Drive video download failed: {type(exc).__name__}: {exc}"
             ) from exc
         finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            # On Vertex AI, the file:// URI points to this local file.
+            # Keep it alive for all agent calls (analyst, grader, head).
+            # Only delete on Developer API (file already uploaded to Files API).
+            if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() != "true":
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     # Tier 2: direct HTTPS download (for large files Tier-1 rejected).
     if resolved is not None and resolved.requires_url_context:
@@ -241,10 +245,12 @@ def ingest_video_for_r2b(
                 f"Direct video download failed: {type(exc).__name__}"
             ) from exc
         finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            # Keep temp file on Vertex AI (file:// URI needs it for all agent calls).
+            if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() != "true":
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     # Nothing worked. Surface a clear error so the pipeline scores
     # criterion 6 as 1 with rationale "No video submitted."
