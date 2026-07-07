@@ -12,6 +12,7 @@ shared state between applicants — so a ThreadPoolExecutor is sufficient;
 no need for asyncio's added complexity for what's mostly I/O-bound work
 (API calls) anyway.
 """
+import json
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -245,30 +246,38 @@ def process_row(
             "No video URL submitted or video could not be resolved.",
         )
 
-    # Alchemist: pitch deck is required. Detect a pitch deck column
-    # (header containing 'pitch deck' or 'presentation') and ingest the
-    # linked Google Slides / Google Drive file as a PDF via the same
-    # Drive download -> GCS/Files API upload path used for videos.
+    # Alchemist: pitch deck is required. If no pitch deck URL is submitted,
+    # score all criteria as 0 and skip the LLM pipeline entirely — this saves
+    # API costs and enforces the requirement.
     if config.program_config.requires_pitch_deck:
         submitted_pitch_deck_url = _submitted_pitch_deck_url(header, row)
-        if submitted_pitch_deck_url:
-            initial_state["submitted_pitch_deck_url"] = submitted_pitch_deck_url
-            try:
-                resolved_deck = ingest_pitch_deck(
-                    submitted_pitch_deck_url,
-                    config.service_account_path,
-                )
-                initial_state["pitch_deck_url"] = resolved_deck.uri
-                initial_state["pitch_deck_mime_type"] = resolved_deck.mime_type
-                initial_state["pitch_deck_source"] = resolved_deck.source
-            except VideoResolutionError as exc:
-                initial_state["pitch_deck_error"] = str(exc)
-        else:
-            # No pitch deck column or no URL — flag so the analyst knows
-            # the required pitch deck is missing.
-            initial_state["pitch_deck_error"] = (
-                "No pitch deck URL submitted or pitch deck could not be resolved."
+        if not submitted_pitch_deck_url:
+            # No pitch deck = automatic 0 on all criteria, no API calls.
+            return row_id, {
+                "score": 0,
+                "reasoning": json.dumps({
+                    "criterion_scores": {c: 0 for c in config.program_config.criteria},
+                    "criterion_rationale": {
+                        c: "No pitch deck submitted. Pitch deck is required for Alchemist evaluation."
+                        for c in config.program_config.criteria
+                    },
+                }),
+                "human_review_flag": False,
+                "skipped_no_pitch_deck": True,
+            }
+        initial_state["submitted_pitch_deck_url"] = submitted_pitch_deck_url
+        try:
+            resolved_deck = ingest_pitch_deck(
+                submitted_pitch_deck_url,
+                config.service_account_path,
             )
+            initial_state["pitch_deck_url"] = resolved_deck.uri
+            initial_state["pitch_deck_mime_type"] = resolved_deck.mime_type
+            initial_state["pitch_deck_source"] = resolved_deck.source
+        except VideoResolutionError as exc:
+            # Pitch deck exists but couldn't be downloaded — still run the
+            # pipeline so the grader can note the issue.
+            initial_state["pitch_deck_error"] = str(exc)
 
     final_state = workflow.invoke(initial_state)
     final_result = final_state.get("final_result", {})
