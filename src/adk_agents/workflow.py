@@ -87,7 +87,7 @@ class AdkReviewWorkflow:
         """
         parts = []
         if state.get("video_url") and not state.get("video_requires_url_context"):
-            mime_type = state.get("video_mime_type", "video/mp4")
+            mime_type = state.get("video_mime_type") or "video/mp4"
             uri = state["video_url"]
             if uri.startswith("file://"):
                 # Vertex AI: read local file as inline bytes.
