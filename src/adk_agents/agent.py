@@ -60,6 +60,18 @@ class DeveloperGemini(Gemini):
 
     Falls back to the default Gemini (Vertex AI) when GOOGLE_API_KEY is
     not set, preserving backward compatibility with Vertex deployments.
+
+    The Vertex fallback uses the base Gemini class's own @cached_property
+    api_client (via super()) — safe again now that workflow.py's
+    AdkReviewWorkflow.invoke() keeps one persistent event loop per worker
+    thread instead of a fresh asyncio.run() per row (see workflow.py's
+    _thread_event_loop). An earlier attempt fixed the resulting "RuntimeError:
+    Event loop is closed" by rebuilding an uncached client on every single
+    api_client access instead — that stopped the crash but leaked a new
+    HTTP connection per access (confirmed live: 45+ open sockets, ~20 stuck
+    in CLOSE-WAIT, for what should've been 1-2 rows). Fixing the actual
+    per-row event-loop lifecycle (workflow.py) makes caching safe again, so
+    this reverts to the library's normal behavior instead of working around it.
     """
 
     @property
@@ -308,6 +320,15 @@ def build_root_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             seed=DETERMINISM_SEED,
+            # Explicit HIGH thinking level (Gemini 3.x) rather than the
+            # model's own dynamic/auto reasoning-budget choice. Dynamic
+            # thinking can allocate a different reasoning budget to the same
+            # input across separate runs, which was a likely contributor to
+            # observed run-to-run flakiness in whether the verify loop
+            # converges (same row, same seed, inconsistent outcomes).
+            thinking_config=types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel.HIGH,
+            ),
             # response_mime_type omitted — see web_verifier comment above.
             tool_config=_build_tool_config(analyzer_model),
         ),
@@ -333,6 +354,9 @@ def build_root_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             seed=DETERMINISM_SEED,
+            thinking_config=types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel.HIGH,
+            ),
             tool_config=_build_tool_config(grader_model),
         ),
         instruction=program_config.grader_instruction,
@@ -394,6 +418,9 @@ def build_head_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             seed=DETERMINISM_SEED,
+            thinking_config=types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel.HIGH,
+            ),
             # response_mime_type omitted — see web_verifier comment above.
             tool_config=_build_tool_config(head_model),
         ),
@@ -409,12 +436,29 @@ def build_head_agent(
 # resolved from the PROGRAM env var (default fellowship_v2), mirroring
 # main.py. Config.from_env is not called here (no sheet/validation) — that
 # happens at batch run time via run_batch.
+#
+# No hardcoded model-name fallback here, matching config.py: this used to
+# default to a specific Gemini tier independently of config.py's own
+# default, so the two could silently disagree about which model runs.
+#
+# This module executes at import time as a side effect of `workflow.py`
+# importing build_root_agent/build_head_agent from this module — i.e. on
+# every real batch run, not just standalone ADK CLI usage. So root_agent/app
+# must degrade to None rather than raise when ANALYZER_MODEL/GRADER_MODEL
+# aren't set yet, otherwise merely importing the batch pipeline would crash
+# before Config.from_env() ever gets a chance to give its clearer error.
+# Only `adk web`/`adk run` actually touch root_agent/app; the batch pipeline
+# never references them (it builds its own agents via config's real values).
 _default_program_config = get_program_config(
     os.environ.get("PROGRAM", "fellowship_v2")
 )
-root_agent = build_root_agent(
-    os.environ.get("ANALYZER_MODEL", "gemini-3.1-flash-lite"),
-    os.environ.get("GRADER_MODEL", "gemini-3.1-flash-lite"),
-    _default_program_config,
-)
-app = App(name="adk_agents", root_agent=root_agent)
+_cli_analyzer_model = os.environ.get("ANALYZER_MODEL")
+_cli_grader_model = os.environ.get("GRADER_MODEL")
+if _cli_analyzer_model and _cli_grader_model:
+    root_agent = build_root_agent(
+        _cli_analyzer_model, _cli_grader_model, _default_program_config,
+    )
+    app = App(name="adk_agents", root_agent=root_agent)
+else:
+    root_agent = None
+    app = None

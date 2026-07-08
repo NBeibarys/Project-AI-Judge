@@ -13,7 +13,7 @@ import socket
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Callable
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -57,12 +57,19 @@ class ResourceMetadata:
 
 @dataclass(frozen=True)
 class ResolvedVideo:
-    """A validated media reference shared by the analyst and grader-head."""
+    """A validated media reference shared by the analyst and grader-head.
+
+    Exactly one of `uri`/`data` carries the actual media: Tier-1 (URL
+    resolution, no download) always sets `uri`; Tier-2 (video_ingestion.py's
+    downloads) sets `data` directly to in-memory bytes on Vertex AI, or `uri`
+    to a Gemini Files API URI on the Developer API.
+    """
 
     uri: str
     mime_type: str | None
     source: str
     requires_url_context: bool = False
+    data: bytes | None = None
 
 
 def _public_https_host(url: str) -> str:
@@ -133,34 +140,49 @@ def _request_metadata(url: str) -> ResourceMetadata:
     opener = build_opener(_SafeRedirectHandler())
     headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
     used_head = True
+    # Every opener.open() below (the initial HEAD, the 403/405/501 GET
+    # fallback, and the HTML-body GET) is network I/O and can raise
+    # HTTPError/URLError/TimeoutError. All three call sites are wrapped in
+    # this one try/except rather than individually, so a host that also
+    # rejects the fallback GET (confirmed live: a Canva link blocking both
+    # HEAD and GET with 403) degrades to an honest "video unavailable"
+    # VideoResolutionError instead of an unhandled exception that crashes
+    # the whole row in pipeline.py's process_row/run_batch.
     try:
-        response = opener.open(
-            Request(url, headers=headers, method="HEAD"),
-            timeout=METADATA_TIMEOUT_SECONDS,
-        )
-    except HTTPError as exc:
-        # Some otherwise valid media servers reject HEAD; GET still reads no video
-        # bytes because the response is closed after headers unless it is HTML.
-        if exc.code not in {403, 405, 501}:
-            raise VideoResolutionError(f"Video metadata request failed: HTTP {exc.code}.") from exc
-        used_head = False
-        response = opener.open(
-            Request(url, headers=headers, method="GET"),
-            timeout=METADATA_TIMEOUT_SECONDS,
-        )
-
-    if used_head:
-        preliminary_type = _normalized_content_type(
-            response.headers.get("Content-Type"),
-            response.geturl(),
-        )
-        if preliminary_type in {"text/html", "application/xhtml+xml"}:
-            # HEAD has no page body, so replace it with one bounded HTML request.
-            response.close()
+        try:
+            response = opener.open(
+                Request(url, headers=headers, method="HEAD"),
+                timeout=METADATA_TIMEOUT_SECONDS,
+            )
+        except HTTPError as exc:
+            # Some otherwise valid media servers reject HEAD; GET still reads no video
+            # bytes because the response is closed after headers unless it is HTML.
+            if exc.code not in {403, 405, 501}:
+                raise VideoResolutionError(f"Video metadata request failed: HTTP {exc.code}.") from exc
+            used_head = False
             response = opener.open(
                 Request(url, headers=headers, method="GET"),
                 timeout=METADATA_TIMEOUT_SECONDS,
             )
+
+        if used_head:
+            preliminary_type = _normalized_content_type(
+                response.headers.get("Content-Type"),
+                response.geturl(),
+            )
+            if preliminary_type in {"text/html", "application/xhtml+xml"}:
+                # HEAD has no page body, so replace it with one bounded HTML request.
+                response.close()
+                response = opener.open(
+                    Request(url, headers=headers, method="GET"),
+                    timeout=METADATA_TIMEOUT_SECONDS,
+                )
+    except VideoResolutionError:
+        raise
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        raise VideoResolutionError(
+            f"Video metadata request failed: {type(exc).__name__}."
+        ) from exc
 
     with response:
         final_url = response.geturl()

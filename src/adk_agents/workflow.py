@@ -25,6 +25,7 @@ to human review without scoring.
 import asyncio
 import json
 import os
+import threading
 import uuid
 
 import certifi
@@ -37,6 +38,29 @@ from .agent import build_head_agent, build_root_agent
 from ..programs import ProgramConfig
 
 APP_NAME = "fellowship_review"
+
+# One persistent event loop per worker thread, reused across every row that
+# thread processes — not a new asyncio.run() per row. pipeline.py's
+# run_batch() processes many rows concurrently via ThreadPoolExecutor;
+# asyncio.run() per row creates and destroys a whole event loop per call.
+# ADK's Gemini.api_client is a @cached_property (see google/adk/models/
+# google_llm.py) — its cached async HTTP client outlives that per-row loop,
+# so the next row on the same thread reuses a client still bound to an
+# already-closed loop, raising "RuntimeError: Event loop is closed" during
+# cleanup (confirmed live: 44 of 69 failures in a 100-row batch run at
+# MAX_CONCURRENCY=8). Keeping one loop alive for the thread's whole
+# lifetime — closed only when the thread pool shuts down — means cached
+# clients stay valid across rows instead of outliving their loop.
+_thread_local = threading.local()
+
+
+def _thread_event_loop() -> asyncio.AbstractEventLoop:
+    loop = getattr(_thread_local, "loop", None)
+    if loop is None or loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        _thread_local.loop = loop
+    return loop
 
 # Default number of Head samples to run and average. The literature
 # (arXiv:2606.26185, Perea multi-judge playbook) recommends 2-3 samples;
@@ -79,40 +103,41 @@ class AdkReviewWorkflow:
     def _build_parts(self, state: dict) -> list:
         """Build the multimodal input parts for an agent run.
 
-        Handles two URI schemes:
-        - https://generativelanguage.googleapis.com/... (Files API, Developer API)
-          → Part.from_uri
-        - file:///local/path (Vertex AI inline, avoids GCS)
-          → Part.from_bytes (read file content into memory)
+        Video/pitch-deck media arrives one of two ways (see ResolvedVideo in
+        video_urls.py): in-memory bytes (state["*_data"] — Tier-2 downloads
+        on Vertex AI, no Files API there) → Part.from_bytes, or a URI Gemini
+        can fetch itself (state["*_url"] — a plain public URL for YouTube/
+        direct HTTPS video, or a Gemini Files API URI on the Developer API)
+        → Part.from_uri. Both "*_data" and "*_url" are checked, not just
+        "*_url" truthiness: a Vertex in-memory result leaves "*_url" as ""
+        (falsy), so checking only "*_url" would silently drop real media.
         """
         parts = []
-        if state.get("video_url") and not state.get("video_requires_url_context"):
-            mime_type = state.get("video_mime_type") or "video/mp4"
-            uri = state["video_url"]
-            if uri.startswith("file://"):
-                # Vertex AI: read local file as inline bytes.
-                local_path = uri.replace("file://", "", 1)
-                with open(local_path, "rb") as f:
+        if not state.get("video_requires_url_context"):
+            video_data = state.get("video_data")
+            video_url = state.get("video_url")
+            if video_data or video_url:
+                mime_type = state.get("video_mime_type") or "video/mp4"
+                if video_data:
                     parts.append(types.Part.from_bytes(
-                        data=f.read(), mime_type=mime_type,
+                        data=video_data, mime_type=mime_type,
                     ))
-            else:
-                parts.append(types.Part.from_uri(
-                    file_uri=uri, mime_type=mime_type,
-                ))
+                else:
+                    parts.append(types.Part.from_uri(
+                        file_uri=video_url, mime_type=mime_type,
+                    ))
         # Alchemist: pitch deck PDF as a multimodal Part (required source).
-        if state.get("pitch_deck_url"):
+        deck_data = state.get("pitch_deck_data")
+        deck_url = state.get("pitch_deck_url")
+        if deck_data or deck_url:
             deck_mime = state.get("pitch_deck_mime_type", "application/pdf")
-            deck_uri = state["pitch_deck_url"]
-            if deck_uri.startswith("file://"):
-                local_path = deck_uri.replace("file://", "", 1)
-                with open(local_path, "rb") as f:
-                    parts.append(types.Part.from_bytes(
-                        data=f.read(), mime_type=deck_mime,
-                    ))
+            if deck_data:
+                parts.append(types.Part.from_bytes(
+                    data=deck_data, mime_type=deck_mime,
+                ))
             else:
                 parts.append(types.Part.from_uri(
-                    file_uri=deck_uri, mime_type=deck_mime,
+                    file_uri=deck_url, mime_type=deck_mime,
                 ))
         text = state.get("raw_row_text", "")
         if state.get("video_requires_url_context"):
@@ -459,7 +484,8 @@ class AdkReviewWorkflow:
         return await self._run_r2b(state)
 
     def invoke(self, state: dict) -> dict:
-        return asyncio.run(self._invoke_async(state))
+        loop = _thread_event_loop()
+        return loop.run_until_complete(self._invoke_async(state))
 
 
 def _as_dict(value) -> dict:

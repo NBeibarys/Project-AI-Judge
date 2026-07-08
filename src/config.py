@@ -58,6 +58,23 @@ class Config:
         elif not os.environ.get("GOOGLE_API_KEY"):
             raise RuntimeError("GOOGLE_API_KEY not set for Gemini Developer API")
 
+        # No hardcoded model-name fallback: which Gemini tier to run is a
+        # cost/quality tradeoff (a prior commit silently switched every
+        # model from gemini-3.5-flash to the cheaper-but-less-reliable
+        # gemini-3.1-flash-lite), not something safe to default silently.
+        # Every deployment must say explicitly which model it wants, same
+        # as it must say which sheet/service account to use.
+        analyzer_model = os.environ.get("ANALYZER_MODEL", "")
+        grader_model = os.environ.get("GRADER_MODEL", "")
+        if not analyzer_model:
+            raise RuntimeError("ANALYZER_MODEL not set")
+        if not grader_model:
+            raise RuntimeError("GRADER_MODEL not set")
+        # HEAD_MODEL defaulting to GRADER_MODEL is an intentional, documented
+        # choice (workflow.py: "Head model defaults to the grader model"),
+        # not a hidden fallback — both are already known-explicit by here.
+        head_model = os.environ.get("HEAD_MODEL", grader_model)
+
         return cls(
             sheet_id=sheet_id,
             sheet_range=os.environ.get(
@@ -70,9 +87,9 @@ class Config:
                 program_config.top_label_row_env, str(program_config.default_top_label_row),
             )),
             service_account_path=sa_path,
-            analyzer_model=os.environ.get("ANALYZER_MODEL", "gemini-3.1-flash-lite"),
-            grader_model=os.environ.get("GRADER_MODEL", "gemini-3.1-flash-lite"),
-            head_model=os.environ.get("HEAD_MODEL", os.environ.get("GRADER_MODEL", "gemini-3.1-flash-lite")),
+            analyzer_model=analyzer_model,
+            grader_model=grader_model,
+            head_model=head_model,
             n_samples=int(os.environ.get("N_SAMPLES", "3")),
             max_concurrency=int(os.environ.get("MAX_CONCURRENCY", "8")),
             checkpoint_path=os.environ.get("CHECKPOINT_PATH", "checkpoint.json"),

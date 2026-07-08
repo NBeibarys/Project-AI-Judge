@@ -223,6 +223,7 @@ def process_row(
 
         if resolved_video is not None:
             initial_state["video_url"] = resolved_video.uri
+            initial_state["video_data"] = resolved_video.data
             initial_state["video_mime_type"] = resolved_video.mime_type
             initial_state["video_source"] = resolved_video.source
             initial_state["video_requires_url_context"] = (
@@ -240,9 +241,14 @@ def process_row(
     # Make the no-video state unambiguous to the analyst by setting a
     # video_error even when no URL was submitted at all — the workflow
     # appends this to the analyst's text input as "VIDEO UNAVAILABLE: ...".
+    # Checks both video_url and video_data: a Tier-2 in-memory download on
+    # Vertex AI leaves video_url as "" (no Files API URI on that backend),
+    # so video_url alone would wrongly read as "no video" and overwrite a
+    # real result with this error.
     if (
         config.program_config.source_priority == "video_primary"
         and not initial_state.get("video_url")
+        and not initial_state.get("video_data")
         and not initial_state.get("video_requires_url_context")
     ):
         initial_state.setdefault(
@@ -260,10 +266,10 @@ def process_row(
             return row_id, {
                 "score": 0,
                 "reasoning": json.dumps({
-                    "criterion_scores": {c: 0 for c in config.program_config.criteria},
+                    "criterion_scores": {c: 0 for c in config.program_config.rubric_criteria},
                     "criterion_rationale": {
                         c: "No pitch deck submitted. Pitch deck is required for Alchemist evaluation."
-                        for c in config.program_config.criteria
+                        for c in config.program_config.rubric_criteria
                     },
                 }),
                 "human_review_flag": True,
@@ -276,6 +282,7 @@ def process_row(
                 config.service_account_path,
             )
             initial_state["pitch_deck_url"] = resolved_deck.uri
+            initial_state["pitch_deck_data"] = resolved_deck.data
             initial_state["pitch_deck_mime_type"] = resolved_deck.mime_type
             initial_state["pitch_deck_source"] = resolved_deck.source
         except VideoResolutionError as exc:
@@ -376,7 +383,17 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
     return {"row_id": row_id, **result}
 
 
-def run_batch(config: Config, force: bool = False):
+def run_batch(
+    config: Config,
+    force: bool = False,
+    limit: int | None = None,
+    on_progress=None,
+):
+    """Run the batch. on_progress(done, total, row_id, ok), if given, is
+    called synchronously on the calling thread right after each row
+    finishes (success or failure) — safe for a caller like a Streamlit
+    script to update a progress bar without needing its own thread.
+    """
     sheets_service = get_sheets_service(config.service_account_path)
     checkpoint = Checkpoint(config.checkpoint_path)
     workflow = _build_workflow(config)
@@ -413,11 +430,15 @@ def run_batch(config: Config, force: bool = False):
     # rate limits and burning retries on 429s instead of real work.
     with ThreadPoolExecutor(max_workers=config.max_concurrency) as pool:
         futures = {}
+        submitted = 0
         for i, row in enumerate(rows):
+            if limit is not None and submitted >= limit:
+                break
             sheet_row_number = i + config.header_row + 1 + offset  # header_row + sub-header skip + 1-indexing
             row_id_preview = _derive_row_id(header, row, sheet_row_number)
             if checkpoint.is_done(row_id_preview) and not force:
                 continue
+            submitted += 1
             future = pool.submit(
                 process_row,
                 config,
@@ -430,8 +451,10 @@ def run_batch(config: Config, force: bool = False):
             )
             futures[future] = (row_id_preview, sheet_row_number)
 
+        done_count = 0
         for future in as_completed(futures):
             row_id, sheet_row_number = futures[future]
+            ok = False
             try:
                 _, result = future.result()
                 if result is None:
@@ -446,9 +469,14 @@ def run_batch(config: Config, force: bool = False):
                     result["human_review_flag"],
                 )
                 results[row_id] = result
+                ok = True
             except Exception as exc:  # noqa: BLE001 — isolate each applicant failure
                 # Provider messages may echo submitted PII, so persist only its type.
                 checkpoint.mark_failed(row_id, type(exc).__name__)
                 errors[row_id] = str(exc)
+            finally:
+                done_count += 1
+                if on_progress is not None:
+                    on_progress(done_count, submitted, row_id, ok)
 
     return {"graded": results, "errors": errors}

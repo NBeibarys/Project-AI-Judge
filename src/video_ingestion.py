@@ -1,9 +1,9 @@
 """Tier-2 video ingestion for R2B: download from sources video_urls.py
-cannot resolve to a Gemini-fetchable URI, then upload to the Gemini Files
-API so the analyst/grader receive the video as a native multimodal Part.
+cannot resolve to a Gemini-fetchable URI, then hand the bytes to Gemini
+so the analyst/grader receive the video as a native multimodal Part.
 
 Scope of this module:
-  - Google Drive share links (download via Drive API → Files API upload)
+  - Google Drive share links (download via Drive API)
 
 What stays on the Tier-1 resolver (video_urls.resolve_video_url) and is
 never downloaded here:
@@ -21,15 +21,20 @@ service-account email (the same one the Sheet is shared with). If it is
 not, the download 404s and the caller treats it as "no video" — criterion 6
 (Presentation & Clarity) then scores 1 with rationale "No video submitted."
 
-Backend: this module uses the Gemini Files API (Developer API / API key)
-exclusively. The Files API auto-expires uploaded objects after 48 hours,
-so no explicit cleanup is needed. The previous Vertex AI / GCS upload
-path has been removed — the project no longer carries GCP billing
-dependencies (no Cloud Storage, no Vertex AI).
+Backend: downloads are held entirely in memory, never written to disk.
+  - On Vertex AI: the Files API isn't available, so ResolvedVideo.data
+    carries the raw bytes directly for inline Part.from_bytes.
+  - On the Developer API (API key): bytes are streamed straight into the
+    Gemini Files API via an in-memory buffer; ResolvedVideo.uri carries the
+    resulting file URI. The Files API auto-expires objects after 48h, so no
+    explicit cleanup is needed there either.
+Holding bytes in memory instead of a temp file avoids a pointless
+write-then-read-back round trip, and means there's nothing left on disk to
+clean up after a row finishes.
 """
+import io
 import os
 import re
-import tempfile
 import time
 from typing import Optional
 
@@ -46,7 +51,7 @@ FILES_API_MAX_BYTES = 2 * 1024 * 1024 * 1024
 # 5-minute ceiling for the PROCESSING → ACTIVE polling loop.
 FILES_API_POLL_TIMEOUT_SECONDS = 300
 FILES_API_POLL_INTERVAL_SECONDS = 3
-# Chunk size for streaming direct-HTTPS downloads into a temp file.
+# Chunk size for streaming downloads.
 DOWNLOAD_CHUNK_BYTES = 10 * 1024 * 1024
 
 
@@ -72,21 +77,21 @@ def _drive_service(service_account_path: str):
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
-def _download_drive_file(service, file_id: str, dest_path: str) -> str:
-    """Stream-download a Drive file to dest_path. Returns dest_path."""
+def _download_drive_file(service, file_id: str) -> bytes:
+    """Stream-download a Drive file into memory and return its bytes."""
     from googleapiclient.http import MediaIoBaseDownload
 
     request = service.files().get_media(fileId=file_id)
-    with open(dest_path, "wb") as fh:
-        downloader = MediaIoBaseDownload(fh, request, chunksize=DOWNLOAD_CHUNK_BYTES)
-        done = False
-        while not done:
-            _status, done = downloader.next_chunk()
-    return dest_path
+    buf = io.BytesIO()
+    downloader = MediaIoBaseDownload(buf, request, chunksize=DOWNLOAD_CHUNK_BYTES)
+    done = False
+    while not done:
+        _status, done = downloader.next_chunk()
+    return buf.getvalue()
 
 
-def _download_https(url: str, dest_path: str) -> str:
-    """Download a direct HTTPS URL to dest_path with a size guard."""
+def _download_https(url: str) -> bytes:
+    """Download a direct HTTPS URL into memory, with a size guard."""
     # Reuse video_urls' SSRF-safe redirect handler for consistency.
     from urllib.request import build_opener, Request
     from .video_urls import _SafeRedirectHandler
@@ -94,8 +99,9 @@ def _download_https(url: str, dest_path: str) -> str:
     opener = build_opener(_SafeRedirectHandler())
     headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
     req = Request(url, headers=headers, method="GET")
-    with opener.open(req, timeout=300) as response, open(dest_path, "wb") as fh:
-        written = 0
+    chunks = []
+    written = 0
+    with opener.open(req, timeout=300) as response:
         while True:
             chunk = response.read(DOWNLOAD_CHUNK_BYTES)
             if not chunk:
@@ -105,34 +111,32 @@ def _download_https(url: str, dest_path: str) -> str:
                 raise VideoResolutionError(
                     "Video exceeds the 2GB Gemini Files API ceiling."
                 )
-            fh.write(chunk)
-    return dest_path
+            chunks.append(chunk)
+    return b"".join(chunks)
 
 
-def _upload_to_gemini_files_api(
-    local_path: str,
+def _upload_or_wrap(
+    data: bytes,
     mime_type: Optional[str],
-) -> str:
-    """Upload a local file and return a URI for the workflow.
+) -> tuple[Optional[str], Optional[bytes]]:
+    """Turn downloaded bytes into whatever the workflow needs to build a Part.
 
-    On the Developer API (API key): uses the Gemini Files API, polls until
-    ACTIVE, and returns the file URI. The Files API auto-expires after 48h.
-
-    On Vertex AI: the Files API is not available. Instead, returns the local
-    file path with a file:// prefix so the workflow can load it as
-    Part.from_bytes (inline data). This avoids GCS entirely.
+    Returns (uri, data) — exactly one is non-None, matching ResolvedVideo's
+    contract:
+      - On Vertex AI: the Files API isn't available, so this just hands the
+        bytes straight back for inline Part.from_bytes. No network call.
+      - On the Developer API: uploads the bytes to the Gemini Files API via
+        an in-memory buffer, polls until ACTIVE, and returns the file URI.
     """
-    # Vertex AI mode: return local path for inline upload.
     if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true":
-        return f"file://{local_path}"
+        return None, data
 
-    # Developer API mode: use Files API.
     from google import genai
 
     client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
     try:
         upload = client.files.upload(
-            file=local_path,
+            file=io.BytesIO(data),
             config={"mime_type": mime_type} if mime_type else None,
         )
     except Exception as exc:
@@ -152,25 +156,11 @@ def _upload_to_gemini_files_api(
                 raise VideoResolutionError(
                     "Files API returned ACTIVE file with no uri."
                 )
-            return uri
+            return uri, None
         if "FAILED" in state:
             raise VideoResolutionError("Gemini Files API processing failed.")
         time.sleep(FILES_API_POLL_INTERVAL_SECONDS)
     raise VideoResolutionError("Gemini Files API upload timed out (5 min).")
-
-
-def _temp_video_path(url: str) -> str:
-    """Allocate a temp path with a video extension.
-
-    Always uses .mp4 because extracting extensions from URLs is unreliable
-    (e.g. https://example.com/video returns .com as extension).
-    """
-    tmp = tempfile.NamedTemporaryFile(
-        suffix=".mp4", delete=False, dir=tempfile.gettempdir(),
-    )
-    path = tmp.name
-    tmp.close()
-    return path
 
 
 def ingest_video_for_r2b(
@@ -181,10 +171,10 @@ def ingest_video_for_r2b(
 
     Tries Tier-1 (video_urls.resolve_video_url) first — it's the cheap path
     and covers YouTube natively without download. If Tier-1 succeeds without
-    needing url_context, returns that result. If Tier-1 fails or only
-    resolves to a webpage, falls back to Tier-2: download the source (Google
-    Drive via the Drive API, or direct HTTPS) and upload to the Gemini Files
-    API, returning a ResolvedVideo whose uri is the Files API file URI.
+    needing url_context, returns that result. Otherwise falls back to
+    Tier-2: download the source from Google Drive via the Drive API,
+    returning a ResolvedVideo with the media as in-memory bytes (Vertex) or
+    a Files API URI (Developer API).
     """
     # Tier 1 first.
     resolved: Optional[ResolvedVideo] = None
@@ -204,34 +194,29 @@ def ingest_video_for_r2b(
     except VideoResolutionError:
         resolved = None
 
-    # Tier 2: Google Drive link → download via Drive API → Files API upload.
+    # Tier 2: Google Drive link → download via Drive API.
     drive_id = extract_drive_file_id(submitted_url)
     if drive_id:
-        tmp_path = _temp_video_path(submitted_url)
         try:
             service = _drive_service(service_account_path)
-            _download_drive_file(service, drive_id, tmp_path)
-            if os.path.getsize(tmp_path) > FILES_API_MAX_BYTES:
+            data = _download_drive_file(service, drive_id)
+            if len(data) > FILES_API_MAX_BYTES:
                 raise VideoResolutionError(
                     "Drive video exceeds the 2GB size limit."
                 )
-            uri = _upload_to_gemini_files_api(tmp_path, mime_type="video/mp4")
-            return ResolvedVideo(uri=uri, mime_type="video/mp4", source="drive_upload")
+            uri, inline_data = _upload_or_wrap(data, mime_type="video/mp4")
+            return ResolvedVideo(
+                uri=uri or "",
+                mime_type="video/mp4",
+                source="drive_upload",
+                data=inline_data,
+            )
         except VideoResolutionError:
             raise
         except Exception as exc:
             raise VideoResolutionError(
                 f"Drive video download failed: {type(exc).__name__}: {exc}"
             ) from exc
-        finally:
-            # On Vertex AI, the file:// URI points to this local file.
-            # Keep it alive for all agent calls (analyst, grader, head).
-            # Only delete on Developer API (file already uploaded to Files API).
-            if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() != "true":
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
 
     # No direct-HTTPS-download fallback here: if resolve_video_url() only
     # found a webpage (requires_url_context=True), that URL is not video
@@ -274,17 +259,7 @@ def _slides_export_url(url: str) -> str:
     return f"https://docs.google.com/presentation/d/{pres_id}/export/pdf"
 
 
-def _temp_pitch_deck_path(url: str) -> str:
-    """Allocate a temp path with a .pdf suffix for pitch deck downloads."""
-    tmp = tempfile.NamedTemporaryFile(
-        suffix=".pdf", delete=False, dir=tempfile.gettempdir(),
-    )
-    path = tmp.name
-    tmp.close()
-    return path
-
-
-def _looks_like_pdf(path: str) -> bool:
+def _looks_like_pdf(data: bytes) -> bool:
     """Reject downloads that aren't actually a PDF.
 
     A non-Slides, non-Drive pitch deck URL (e.g. a Canva share page) has no
@@ -293,8 +268,7 @@ def _looks_like_pdf(path: str) -> bool:
     magic bytes turns that into an honest "deck unavailable" instead of
     uploading HTML to Gemini mislabeled application/pdf.
     """
-    with open(path, "rb") as f:
-        return f.read(5) == b"%PDF-"
+    return data[:5] == b"%PDF-"
 
 
 def ingest_pitch_deck(
@@ -309,41 +283,44 @@ def ingest_pitch_deck(
       - Google Drive file links (drive.google.com/... or open?id=...)
         — downloaded via the Drive API (same path as video ingestion).
 
-    The downloaded PDF is uploaded to the Gemini Files API and the file
-    URI is returned. The Files API auto-expires the object after 48 hours,
-    so no cleanup is needed. The returned ResolvedVideo carries
-    mime_type=application/pdf.
+    The downloaded PDF's bytes are handed to Gemini directly (Vertex) or
+    uploaded to the Gemini Files API (Developer API). The Files API
+    auto-expires the object after 48 hours, so no cleanup is needed there.
+    The returned ResolvedVideo carries mime_type=application/pdf.
     """
-    tmp_path = _temp_pitch_deck_path(submitted_url)
-
     try:
         # Google Slides: export as PDF via HTTPS.
         if _is_google_slides_url(submitted_url):
             export_url = _slides_export_url(submitted_url)
-            _download_https(export_url, tmp_path)
+            data = _download_https(export_url)
         else:
             # Google Drive file link: download via the Drive API.
             drive_id = extract_drive_file_id(submitted_url)
             if drive_id:
                 service = _drive_service(service_account_path)
-                _download_drive_file(service, drive_id, tmp_path)
+                data = _download_drive_file(service, drive_id)
             else:
                 # Direct HTTPS link to a PDF.
-                _download_https(submitted_url, tmp_path)
+                data = _download_https(submitted_url)
 
-            if os.path.getsize(tmp_path) > FILES_API_MAX_BYTES:
+            if len(data) > FILES_API_MAX_BYTES:
                 raise VideoResolutionError(
                     "Pitch deck exceeds the 2GB size limit."
                 )
 
-        if not _looks_like_pdf(tmp_path):
+        if not _looks_like_pdf(data):
             raise VideoResolutionError(
                 "Downloaded pitch deck is not a valid PDF — the source URL "
                 "may not offer a direct export (e.g. a Canva share page)."
             )
 
-        uri = _upload_to_gemini_files_api(tmp_path, mime_type=PITCH_DECK_MIME_TYPE)
-        return ResolvedVideo(uri=uri, mime_type=PITCH_DECK_MIME_TYPE, source="pitch_deck_upload")
+        uri, inline_data = _upload_or_wrap(data, mime_type=PITCH_DECK_MIME_TYPE)
+        return ResolvedVideo(
+            uri=uri or "",
+            mime_type=PITCH_DECK_MIME_TYPE,
+            source="pitch_deck_upload",
+            data=inline_data,
+        )
 
     except VideoResolutionError:
         raise
@@ -351,10 +328,3 @@ def ingest_pitch_deck(
         raise VideoResolutionError(
             f"Pitch deck download failed: {type(exc).__name__}: {exc}"
         ) from exc
-    finally:
-        # Keep temp file on Vertex AI (file:// URI needs it for all agent calls).
-        if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() != "true":
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
