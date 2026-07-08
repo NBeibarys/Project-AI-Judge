@@ -90,6 +90,66 @@ def _download_drive_file(service, file_id: str) -> bytes:
     return buf.getvalue()
 
 
+TRANSCODE_TIMEOUT_SECONDS = 180
+
+
+def _transcode_to_mp4(data: bytes) -> bytes:
+    """Re-encode arbitrary video bytes to MP4 (H.264/AAC) in memory.
+
+    Only video/mp4 is confirmed to work with Vertex AI's inline
+    Part.from_bytes video input (see ingest_video_for_r2b's docstring) — a
+    real .webm sent inline, even labeled correctly, gets a 400 from Gemini.
+    Runs ffmpeg as a subprocess piping bytes via stdin/stdout (pipe:0/pipe:1)
+    — nothing touches disk. Re-encodes rather than stream-copies: copying
+    would only work if the source codec is already MP4-compatible, and
+    re-encoding to the most universally-supported codec pair is more
+    reliable than trying to detect and special-case source codecs.
+    """
+    import subprocess
+
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-i", "pipe:0",
+            "-c:v", "libx264", "-c:a", "aac",
+            "-movflags", "frag_keyframe+empty_moov",  # streamable to a pipe; no seekable-file requirement
+            "-f", "mp4",
+            "pipe:1",
+        ],
+        input=data,
+        capture_output=True,
+        timeout=TRANSCODE_TIMEOUT_SECONDS,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        raise VideoResolutionError(
+            "Video transcode to MP4 failed: "
+            + proc.stderr[-500:].decode("utf-8", errors="replace")
+        )
+    return proc.stdout
+
+
+def _drive_video_mime_type(service, file_id: str) -> str:
+    """Return the video MIME type to declare to Gemini for a Drive file.
+
+    Drive knows the real container format (mp4, webm, mov, ...) from the
+    upload itself — trust it rather than assuming every Drive video is an
+    mp4. A real .webm sent to Gemini labeled video/mp4 fails with an opaque
+    400 INVALID_ARGUMENT (confirmed live: Drive reported
+    'video/webm' for a file that was hardcoded to 'video/mp4' here, and
+    Gemini rejected it). Falls back to video/mp4 only if Drive's reported
+    type isn't one Gemini documents support for — better an honest guess at
+    a supported type than sending a format Gemini is certain to reject.
+    """
+    from .video_urls import SUPPORTED_VIDEO_MIME_TYPES
+
+    try:
+        meta = service.files().get(fileId=file_id, fields="mimeType").execute()
+        reported = meta.get("mimeType", "")
+    except Exception:
+        return "video/mp4"
+    return reported if reported in SUPPORTED_VIDEO_MIME_TYPES else "video/mp4"
+
+
 def _download_https(url: str) -> bytes:
     """Download a direct HTTPS URL into memory, with a size guard."""
     # Reuse video_urls' SSRF-safe redirect handler for consistency.
@@ -199,15 +259,28 @@ def ingest_video_for_r2b(
     if drive_id:
         try:
             service = _drive_service(service_account_path)
+            mime_type = _drive_video_mime_type(service, drive_id)
             data = _download_drive_file(service, drive_id)
             if len(data) > FILES_API_MAX_BYTES:
                 raise VideoResolutionError(
                     "Drive video exceeds the 2GB size limit."
                 )
-            uri, inline_data = _upload_or_wrap(data, mime_type="video/mp4")
+            if (
+                mime_type != "video/mp4"
+                and os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true"
+            ):
+                # On Vertex, video goes inline (Part.from_bytes) — no Files
+                # API to properly ingest arbitrary containers there. Only
+                # video/mp4 is confirmed to work inline; a real .webm sent
+                # inline labeled correctly still 400s (confirmed live).
+                # Transcode to MP4 in memory via ffmpeg rather than losing
+                # the video as evidence entirely.
+                data = _transcode_to_mp4(data)
+                mime_type = "video/mp4"
+            uri, inline_data = _upload_or_wrap(data, mime_type=mime_type)
             return ResolvedVideo(
                 uri=uri or "",
-                mime_type="video/mp4",
+                mime_type=mime_type,
                 source="drive_upload",
                 data=inline_data,
             )
