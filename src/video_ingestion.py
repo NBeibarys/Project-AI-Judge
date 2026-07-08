@@ -48,6 +48,14 @@ from .video_urls import (
 # Gemini Files API: 2GB per file (paid tier 20GB). We cap downloads at 2GB
 # to avoid downloading a file we then can't upload.
 FILES_API_MAX_BYTES = 2 * 1024 * 1024 * 1024
+# Vertex AI inline Part.from_bytes PDF limit — a fixed platform limit, not
+# an adjustable quota (Google's own docs: ~50MB for PDFs specifically, vs
+# ~100MB general inline cap). A 90MB real deck confirmed failing against
+# this. Kept with a safety margin below the documented ceiling.
+VERTEX_INLINE_PDF_MAX_BYTES = 45 * 1024 * 1024
+# Vertex AI inline Part.from_bytes video limit — same kind of fixed
+# platform limit, general ~100MB inline cap. Kept with a safety margin.
+VERTEX_INLINE_VIDEO_MAX_BYTES = 95 * 1024 * 1024
 # 5-minute ceiling for the PROCESSING → ACTIVE polling loop.
 FILES_API_POLL_TIMEOUT_SECONDS = 300
 FILES_API_POLL_INTERVAL_SECONDS = 3
@@ -123,6 +131,79 @@ def _transcode_to_mp4(data: bytes) -> bytes:
     if proc.returncode != 0 or not proc.stdout:
         raise VideoResolutionError(
             "Video transcode to MP4 failed: "
+            + proc.stderr[-500:].decode("utf-8", errors="replace")
+        )
+    return proc.stdout
+
+
+VIDEO_SHRINK_AUDIO_BITRATE_BPS = 128_000
+VIDEO_SHRINK_SAFETY_MARGIN = 0.92  # headroom for container/muxing overhead
+VIDEO_SHRINK_MIN_VIDEO_BITRATE_BPS = 100_000  # floor so we never target an unwatchable bitrate
+
+
+def _shrink_video_to_fit(data: bytes, max_bytes: int) -> bytes:
+    """Re-encode a video to fit under max_bytes, minimizing quality loss.
+
+    Rather than a fixed low bitrate (wastes quality on short videos, still
+    fails to fit long ones), probes the video's actual duration and derives
+    a target bitrate from the byte budget — the standard "encode to target
+    file size" technique, so quality is only reduced as much as the size
+    constraint actually requires. Runs entirely via ffmpeg/ffprobe
+    stdin/stdout pipes — nothing touches disk.
+    """
+    import json
+    import subprocess
+
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-print_format", "json", "-show_format",
+            "-i", "pipe:0",
+        ],
+        input=data,
+        capture_output=True,
+        timeout=60,
+    )
+    if probe.returncode != 0:
+        raise VideoResolutionError(
+            "Video duration probe failed: "
+            + probe.stderr[-300:].decode("utf-8", errors="replace")
+        )
+    try:
+        duration = float(json.loads(probe.stdout)["format"]["duration"])
+    except Exception as exc:
+        raise VideoResolutionError(
+            f"Could not determine video duration: {type(exc).__name__}"
+        ) from exc
+    if duration <= 0:
+        raise VideoResolutionError("Video has zero or unknown duration.")
+
+    target_total_bps = (max_bytes * 8 * VIDEO_SHRINK_SAFETY_MARGIN) / duration
+    video_bps = max(
+        int(target_total_bps - VIDEO_SHRINK_AUDIO_BITRATE_BPS),
+        VIDEO_SHRINK_MIN_VIDEO_BITRATE_BPS,
+    )
+
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-i", "pipe:0",
+            "-c:v", "libx264",
+            "-b:v", str(video_bps),
+            "-maxrate", str(int(video_bps * 1.5)),
+            "-bufsize", str(int(video_bps * 2)),
+            "-c:a", "aac", "-b:a", str(VIDEO_SHRINK_AUDIO_BITRATE_BPS),
+            "-movflags", "frag_keyframe+empty_moov",
+            "-f", "mp4",
+            "pipe:1",
+        ],
+        input=data,
+        capture_output=True,
+        timeout=TRANSCODE_TIMEOUT_SECONDS,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        raise VideoResolutionError(
+            "Video compress failed: "
             + proc.stderr[-500:].decode("utf-8", errors="replace")
         )
     return proc.stdout
@@ -277,6 +358,16 @@ def ingest_video_for_r2b(
                 # the video as evidence entirely.
                 data = _transcode_to_mp4(data)
                 mime_type = "video/mp4"
+            if (
+                len(data) > VERTEX_INLINE_VIDEO_MAX_BYTES
+                and os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true"
+            ):
+                # A correctly-formatted mp4 can still be too big for
+                # Vertex's inline limit — same failure mode as the oversized
+                # PDF (crashes the whole row, deck+text included). Shrink
+                # rather than drop it, same reasoning as the PDF case: don't
+                # let one oversized file take the whole row down.
+                data = _shrink_video_to_fit(data, VERTEX_INLINE_VIDEO_MAX_BYTES)
             uri, inline_data = _upload_or_wrap(data, mime_type=mime_type)
             return ResolvedVideo(
                 uri=uri or "",
@@ -344,6 +435,53 @@ def _looks_like_pdf(data: bytes) -> bool:
     return data[:5] == b"%PDF-"
 
 
+PDF_COMPRESS_MAX_IMAGE_DIMENSION = 1600  # px, long edge
+PDF_COMPRESS_JPEG_QUALITY = 85
+
+
+def _compress_pdf(data: bytes) -> bytes:
+    """Shrink a PDF by downsampling only its oversized embedded images.
+
+    Minimizes quality loss by being targeted rather than uniform: each
+    image is checked individually and only touched if it's larger than
+    PDF_COMPRESS_MAX_IMAGE_DIMENSION on its long edge (most oversized decks
+    are a handful of screenshots/photos exported at print resolution, far
+    higher than useful for a model reading the deck) — already-reasonable
+    images are left untouched. Text, vector graphics, and layout are
+    unaffected; only raster images are re-encoded.
+    """
+    import fitz
+    from PIL import Image
+
+    doc = fitz.open(stream=data, filetype="pdf")
+    for page in doc:
+        for img_info in page.get_images(full=True):
+            xref = img_info[0]
+            try:
+                base_image = doc.extract_image(xref)
+                pil_img = Image.open(io.BytesIO(base_image["image"]))
+                pil_img.load()
+            except Exception:
+                continue
+            w, h = pil_img.size
+            if max(w, h) <= PDF_COMPRESS_MAX_IMAGE_DIMENSION:
+                continue
+            scale = PDF_COMPRESS_MAX_IMAGE_DIMENSION / max(w, h)
+            new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+            resized = pil_img.convert("RGB").resize(new_size, Image.LANCZOS)
+            out = io.BytesIO()
+            resized.save(out, format="JPEG", quality=PDF_COMPRESS_JPEG_QUALITY)
+            try:
+                page.replace_image(xref, stream=out.getvalue())
+            except Exception:
+                continue
+
+    out_buf = io.BytesIO()
+    doc.save(out_buf, garbage=4, deflate=True)
+    doc.close()
+    return out_buf.getvalue()
+
+
 def ingest_pitch_deck(
     submitted_url: str,
     service_account_path: str,
@@ -386,6 +524,21 @@ def ingest_pitch_deck(
                 "Downloaded pitch deck is not a valid PDF — the source URL "
                 "may not offer a direct export (e.g. a Canva share page)."
             )
+
+        use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true"
+        if use_vertex and len(data) > VERTEX_INLINE_PDF_MAX_BYTES:
+            # Deck is the required, primary source for Alchemist — unlike
+            # video, degrading to "unavailable" here has a real fairness
+            # cost (caps Product/MVP & Innovation, cripples the rest of the
+            # rubric). Compress rather than give up: recompresses only the
+            # oversized embedded images (see _compress_pdf), preserving
+            # text/layout, before falling back to an honest error.
+            data = _compress_pdf(data)
+            if len(data) > VERTEX_INLINE_PDF_MAX_BYTES:
+                raise VideoResolutionError(
+                    "Pitch deck exceeds Vertex AI's inline PDF size limit "
+                    "even after image compression."
+                )
 
         uri, inline_data = _upload_or_wrap(data, mime_type=PITCH_DECK_MIME_TYPE)
         return ResolvedVideo(
