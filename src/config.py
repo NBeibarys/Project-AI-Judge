@@ -37,9 +37,23 @@ class Config:
     program_config: ProgramConfig
 
     @classmethod
-    def from_env(cls, program: str = "fellowship_v2") -> "Config":
+    def from_env(
+        cls,
+        program: str = "fellowship_v2",
+        *,
+        sheet_id_override: str | None = None,
+        sheet_range_override: str | None = None,
+        header_row_override: int | None = None,
+    ) -> "Config":
+        """Build Config from env vars, with optional per-call overrides for
+        sheet_id/sheet_range/header_row — used by app.py's sheet picker so a
+        user can point a run at a different sheet/tab/header row (e.g. R2B's
+        multiple competition rounds, each its own sheet) without editing
+        .env. Omitted overrides fall back to the existing env-var behavior
+        unchanged.
+        """
         program_config = get_program_config(program)
-        sheet_id = os.environ.get(program_config.sheet_id_env, "")
+        sheet_id = sheet_id_override or os.environ.get(program_config.sheet_id_env, "")
         sa_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_PATH", "")
 
         if not sheet_id:
@@ -75,14 +89,45 @@ class Config:
         # not a hidden fallback — both are already known-explicit by here.
         head_model = os.environ.get("HEAD_MODEL", grader_model)
 
+        sheet_range = sheet_range_override or os.environ.get(
+            program_config.sheet_range_env, "Grading Final",
+        )
+        header_row = (
+            header_row_override
+            if header_row_override is not None
+            else int(os.environ.get(
+                program_config.header_row_env, str(program_config.default_header_row),
+            ))
+        )
+
+        # Checkpoint is scoped per (program, sheet_id) — a single shared
+        # checkpoint would incorrectly treat "already graded in sheet A" as
+        # "already graded in sheet B" for the same applicant email, once
+        # sheet switching is dynamic (e.g. R2B's multiple competition
+        # rounds, each its own sheet). _derive_row_id in pipeline.py keys
+        # checkpoints by email only, with no sheet_id in the key, so this
+        # isolation has to happen at the file level instead.
+        #
+        # Exception: CHECKPOINT_PATH is honored as-is, but ONLY for
+        # alchemist specifically — its real checkpoint file already tracks
+        # genuine grading progress accumulated over many hours today
+        # (checkpoint_alchemist.json). CHECKPOINT_PATH is a single global
+        # env var with no program name in it, so honoring it for every
+        # program (as an earlier version of this code did) silently made
+        # fellowship_v2/r2b pick up ALCHEMIST's checkpoint file too — a real
+        # bug caught by testing all three programs, not hypothetical.
+        import hashlib
+        explicit_checkpoint = os.environ.get("CHECKPOINT_PATH")
+        if explicit_checkpoint and program == "alchemist":
+            checkpoint_path = explicit_checkpoint
+        else:
+            sheet_hash = hashlib.sha1(sheet_id.encode()).hexdigest()[:10]
+            checkpoint_path = f"checkpoint_{program}_{sheet_hash}.json"
+
         return cls(
             sheet_id=sheet_id,
-            sheet_range=os.environ.get(
-                program_config.sheet_range_env, "Grading Final",
-            ),
-            header_row=int(os.environ.get(
-                program_config.header_row_env, str(program_config.default_header_row),
-            )),
+            sheet_range=sheet_range,
+            header_row=header_row,
             top_label_row=int(os.environ.get(
                 program_config.top_label_row_env, str(program_config.default_top_label_row),
             )),
@@ -92,6 +137,6 @@ class Config:
             head_model=head_model,
             n_samples=int(os.environ.get("N_SAMPLES", "3")),
             max_concurrency=int(os.environ.get("MAX_CONCURRENCY", "8")),
-            checkpoint_path=os.environ.get("CHECKPOINT_PATH", "checkpoint.json"),
+            checkpoint_path=checkpoint_path,
             program_config=program_config,
         )
