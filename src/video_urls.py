@@ -70,6 +70,22 @@ class ResolvedVideo:
     source: str
     requires_url_context: bool = False
     data: bytes | None = None
+    # Plain-text readout of any image-only deck slides (charts, financial
+    # tables, screenshots — no selectable text). Populated only by
+    # video_ingestion.py's ingest_pitch_deck, via one bundled Gemini call
+    # over all such slides at once (see _read_chart_images). Empty for
+    # video and for decks with no image-only slides.
+    #
+    # Why text, not raw images: Gemini reads these charts correctly when
+    # given the image alone (confirmed live), but unreliably when the same
+    # image is attached alongside the full deck/video/application text in
+    # one big call — a documented "multimodal needle in a haystack"
+    # weakness (arXiv:2406.11230): image-embedded retrieval degrades in
+    # large multi-image context even though plain-text retrieval stays
+    # reliable. Converting the chart to text up front sidesteps the weak
+    # point entirely — the main analyst/grader/head calls only ever have to
+    # do text-based cross-checking, which is the strong point.
+    chart_text: str = ""
 
 
 def _public_https_host(url: str) -> str:

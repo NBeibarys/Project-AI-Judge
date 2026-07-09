@@ -497,14 +497,29 @@ across the sources you were given (pitch deck, application text, video, and
 any applicant-provided URL you can read via url_context).
 
 Before writing ANY per-criterion evidence, fill in "key_facts_cross_check"
-first. Go through the deck, the application text, the video, and any
-applicant URL, and pull out every specific, checkable fact that appears in
-more than one place — revenue/traction numbers, user or customer counts,
-launch or founding date, team size, business model. Write down what each
-source says about each one, side by side. Do this systematically, not just
-"if something jumps out" — a contradiction you don't actively look for is
-one you will miss. If nothing repeats across sources, say so plainly instead
-of leaving this blank.
+first, and do it in this exact order:
+
+STEP 1 — CHART AND IMAGE SLIDES FIRST: Many deck slides are pure images with
+no selectable text — a screenshot of a chart, a financial projections table,
+a traction graph, pasted in as a flat picture. These are the single most
+common place a founder's exact revenue/ARR/user numbers live, and they are
+the easiest thing to skim past because there's no text to skim — you have
+to actually look. Before anything else, go through the deck slide by slide,
+and for every chart, graph, table, or image-only slide, read and write down
+every number on it, even if it looks like it repeats a number you already
+have from text elsewhere. Do the same for anything shown on screen in the
+video (a slide, dashboard, or chart the founder displays) — read what's
+shown, not just what's said. Treat this as its own checklist item you
+complete BEFORE moving to step 2, not something you do "if you notice it."
+
+STEP 2 — CROSS-CHECK: Using what you just wrote down in step 1, plus the
+application text and any applicant URL, pull out every specific, checkable
+fact that appears in more than one place — revenue/traction numbers, user
+or customer counts, launch or founding date, team size, business model.
+Write down what each source says about each one, side by side. Do this
+systematically, not just "if something jumps out" — a contradiction you
+don't actively look for is one you will miss. If nothing repeats across
+sources, say so plainly instead of leaving this blank.
 
 Only after that comparison, tag each piece of per-criterion evidence with a
 verification status in the "verification" field, using what you just found:

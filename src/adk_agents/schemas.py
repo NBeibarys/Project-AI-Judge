@@ -323,14 +323,20 @@ class AlchemistAnalystReport(BaseModel):
     key_facts_cross_check: str = Field(
         min_length=1,
         description=(
-            "List every checkable, specific fact given in more than one "
-            "source (deck, application text, video, any applicant URL) — "
-            "revenue/traction numbers, user or customer counts, launch/"
-            "founding date, team size, business model. For EACH such fact, "
-            "state what each source says about it, e.g. 'Revenue: deck "
-            "says $1M ARR (p.8); application text says $800K.' If two "
-            "sources disagree on the same fact, say so explicitly here. If "
-            "nothing repeats across sources, say so."
+            "STEP 1: go through the deck slide by slide FIRST and read every "
+            "chart, graph, table, or image-only slide (no selectable text) — "
+            "these are the most common place exact revenue/ARR/user numbers "
+            "live, and the easiest to skim past since there's no text to "
+            "skim. Do the same for anything shown on screen in the video. "
+            "STEP 2: using what you just read, list every checkable, "
+            "specific fact given in more than one source (deck, application "
+            "text, video, any applicant URL) — revenue/traction numbers, "
+            "user or customer counts, launch/founding date, team size, "
+            "business model. For EACH such fact, state what each source "
+            "says about it, e.g. 'Revenue: deck chart on p.8 shows $1M ARR "
+            "for 2025; application text says $800K.' If two sources "
+            "disagree on the same fact, say so explicitly here. If nothing "
+            "repeats across sources, say so."
         ),
     )
     Product_MVP_Innovation: CriterionEvidence

@@ -280,11 +280,13 @@ def process_row(
             resolved_deck = ingest_pitch_deck(
                 submitted_pitch_deck_url,
                 config.service_account_path,
+                config.analyzer_model,
             )
             initial_state["pitch_deck_url"] = resolved_deck.uri
             initial_state["pitch_deck_data"] = resolved_deck.data
             initial_state["pitch_deck_mime_type"] = resolved_deck.mime_type
             initial_state["pitch_deck_source"] = resolved_deck.source
+            initial_state["pitch_deck_chart_text"] = resolved_deck.chart_text
         except VideoResolutionError as exc:
             # Pitch deck exists but couldn't be downloaded — still run the
             # pipeline so the grader can note the issue.

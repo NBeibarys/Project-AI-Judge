@@ -140,6 +140,24 @@ class AdkReviewWorkflow:
                     file_uri=deck_url, mime_type=deck_mime,
                 ))
         text = state.get("raw_row_text", "")
+        # Pre-extracted text readout of image-only deck slides (charts,
+        # financial tables — see video_ingestion.py's _read_chart_images).
+        # Attaching the raw chart images themselves as separate Parts was
+        # tried first and confirmed NOT to reliably help (the model reads
+        # them correctly in isolation but not consistently once competing
+        # with the full deck/video/4-criteria task in the same call — a
+        # documented multimodal "needle in a haystack" weakness,
+        # arXiv:2406.11230). Converting to text up front sidesteps that:
+        # text-based cross-checking in a large context is reliable, so this
+        # gives the analyst/grader/head already-read numbers to compare
+        # against, instead of asking them to re-read the image themselves.
+        if state.get("pitch_deck_chart_text"):
+            text += (
+                "\n\nPRE-EXTRACTED DATA FROM DECK CHART/IMAGE SLIDES "
+                "(already read for you — use this to cross-check against "
+                "other sources, same as any other evidence):\n"
+                f"{state['pitch_deck_chart_text']}"
+            )
         if state.get("video_requires_url_context"):
             text += (
                 "\n\nVIDEO WEBPAGE REQUIRES URL CONTEXT: "

@@ -482,9 +482,113 @@ def _compress_pdf(data: bytes) -> bytes:
     return out_buf.getvalue()
 
 
+def _extract_chart_images(data: bytes) -> list[tuple[bytes, str]]:
+    """Extract image-only slides (no selectable text) from a pitch deck.
+
+    Many deck slides are a single flat screenshot — a financial chart, a
+    traction graph, a projections table — pasted in with no separate text
+    layer, and these are the most common place exact revenue/ARR/user
+    numbers live. Feeds _read_chart_images, which converts them to text via
+    one bundled Gemini call (see that function for why text, not raw
+    images, is what downstream calls actually use).
+
+    Only pages with ZERO extractable text and at least one embedded image
+    qualify — a deliberately narrow, high-precision match (a slide with any
+    real text is left to the normal deck read) rather than pulling every
+    image on every slide, most of which are logos/icons/photos with nothing
+    checkable on them.
+    """
+    import fitz
+    from PIL import Image
+
+    results: list[tuple[bytes, str]] = []
+    try:
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception:
+        return results
+    for page in doc:
+        if page.get_text().strip():
+            continue
+        images = page.get_images(full=True)
+        if not images:
+            continue
+        # Largest embedded image on the page (by pixel area) is almost
+        # always the actual slide content; smaller ones tend to be
+        # background textures or decorative elements on the same page.
+        best_xref = None
+        best_area = 0
+        for img_info in images:
+            xref = img_info[0]
+            try:
+                base_image = doc.extract_image(xref)
+                pil_img = Image.open(io.BytesIO(base_image["image"]))
+                w, h = pil_img.size
+            except Exception:
+                continue
+            if w * h > best_area:
+                best_area = w * h
+                best_xref = xref
+        if best_xref is None:
+            continue
+        try:
+            base_image = doc.extract_image(best_xref)
+        except Exception:
+            continue
+        ext = base_image.get("ext", "png").lower()
+        mime_type = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+        results.append((base_image["image"], mime_type))
+    doc.close()
+    return results
+
+
+def _build_genai_client():
+    from google import genai
+
+    if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true":
+        return genai.Client(
+            vertexai=True,
+            project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
+            location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"),
+        )
+    return genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+
+
+def _read_chart_images(images: list[tuple[bytes, str]], model: str) -> str:
+    """Convert image-only deck slides to plain text via ONE bundled Gemini
+    call — every image goes in a single request, not one call per image,
+    so this adds exactly one extra call per deck regardless of how many
+    image-only slides it has.
+
+    Best-effort: returns "" (no text) on any failure — a chart-reading
+    problem should never fail pitch deck ingestion, it just means that
+    deck's charts don't get the pre-extraction benefit for this row.
+    """
+    if not images:
+        return ""
+    from google.genai import types
+
+    try:
+        client = _build_genai_client()
+        parts = [
+            "The following images are slides from a startup pitch deck "
+            "that have no selectable text (charts, financial tables, "
+            "screenshots). For EACH image, in order, list every number, "
+            "label, and axis you can read on it. If an image has no "
+            "readable numbers (e.g. it's a logo or photo), say so briefly. "
+            "Label each response by image number (Image 1, Image 2, ...)."
+        ]
+        for image_bytes, mime_type in images:
+            parts.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
+        response = client.models.generate_content(model=model, contents=parts)
+        return (response.text or "").strip()
+    except Exception:
+        return ""
+
+
 def ingest_pitch_deck(
     submitted_url: str,
     service_account_path: str,
+    analyzer_model: str = "",
 ) -> ResolvedVideo:
     """Resolve a submitted pitch deck link for Alchemist grading.
 
@@ -540,12 +644,19 @@ def ingest_pitch_deck(
                     "even after image compression."
                 )
 
+        # Best-effort: a chart-extraction or pre-read failure should never
+        # fail the whole deck ingestion — both functions degrade to an
+        # empty result internally on any error.
+        chart_images = _extract_chart_images(data)
+        chart_text = _read_chart_images(chart_images, analyzer_model) if analyzer_model else ""
+
         uri, inline_data = _upload_or_wrap(data, mime_type=PITCH_DECK_MIME_TYPE)
         return ResolvedVideo(
             uri=uri or "",
             mime_type=PITCH_DECK_MIME_TYPE,
             source="pitch_deck_upload",
             data=inline_data,
+            chart_text=chart_text,
         )
 
     except VideoResolutionError:
