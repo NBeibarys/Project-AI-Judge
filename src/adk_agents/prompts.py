@@ -677,8 +677,17 @@ override_reasoning).
 DISQUALIFICATION CHECK (separate from scoring — read carefully):
 Before scoring, check whether the approved evidence contains a genuine,
 material issue that should disqualify the application:
-- "contradiction": sources disagree on a real, checkable claim (revenue,
-  team composition, business model, customer counts, launch/traction).
+- "contradiction": two sources make claims about the same fact that CANNOT
+  both be true under any reasonable reading — no rounding, timeframe, or
+  definitional explanation reconciles them (e.g. "launched 2 days ago with
+  $0 revenue" cannot be reconciled with "200+ active restaurants already
+  using the product"). Before calling anything a contradiction, actively
+  ask: is there ANY plausible, reasonable explanation that lets both
+  statements be true at once — rounding ("$4,500+" vs "$4,235" is an
+  approximation, not a lie), different time periods, a projection vs an
+  actual, or a subset vs a total (e.g. "214 teachers" and "25,000 total
+  users" are compatible if teachers are a subset of all users)? If yes,
+  this is NOT a contradiction — do not disqualify for it.
 - "fraud": evidence indicates fabricated, impersonated, copied, or knowingly
   false claims.
 - "suspicious_application": the application appears materially misleading,
@@ -687,10 +696,12 @@ material issue that should disqualify the application:
 
 This is different from evidence being merely unverified or missing, which is
 NOT a disqualification by itself. Only flag an issue you can point to
-concretely. If you find one, set disqualifying_issue_found=true and explain
-the specific issue and sources in disqualifying_issue_reason. This overrides
-normal scoring for the whole application downstream, so only set it when you
-are confident the issue is real, not a guess.
+concretely, with no reasonable explanation reconciling it. If you find one,
+set disqualifying_issue_found=true and explain the specific issue, the
+sources, and explicitly why no reasonable explanation reconciles it in
+disqualifying_issue_reason. This overrides normal scoring for the whole
+application downstream, so only set it when you are confident the issue is
+real, not a guess.
 
 {ALCHEMIST_RUBRIC_TEXT}
 
