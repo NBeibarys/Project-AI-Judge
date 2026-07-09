@@ -101,13 +101,12 @@ class CriterionEvidence(BaseModel):
     """Grounded evidence and the qualification needed to interpret it."""
     evidence: str = Field(min_length=1)
     notes: str = Field(min_length=1)
-    # Web verification tag (Fellowship V2 + Alchemist analysts only).
-    # The analyst searches the web to verify key claims and tags each
-    # piece of evidence. 'verified' = web evidence found supporting the
-    # claim; 'unverified' = no web evidence found (DO NOT penalize —
-    # absence of evidence is not evidence of absence); 'contradicted' =
-    # web evidence contradicts the claim (flag for grader). The Head
-    # scorer does not use this field.
+    # Cross-source consistency tag (Alchemist analyst only; no web search
+    # tool is attached — see agent.py's google_search removal note).
+    # 'verified' = corroborated by another of the applicant's own sources;
+    # 'unverified' = appears in only one source (DO NOT penalize);
+    # 'contradicted' = two of the applicant's own sources conflict on the
+    # same fact (flag for grader). The Head scorer does not use this field.
     verification: Optional[Literal["verified", "unverified", "contradicted"]] = None
 
 
@@ -212,6 +211,19 @@ class R2BGraderVerdict(BaseModel):
     """
     approved: bool
     feedback: str = ""
+    # Set true only when the grader has personally confirmed — by checking
+    # the applicant's OWN sources against each other (no web search
+    # available) — that the application contains a genuine, material
+    # contradiction or fabrication, not just a thin/sloppy analyst write-up.
+    # This is distinct from approved=false for an ordinary revisable evidence
+    # gap: a real contradiction/fraud can't be fixed by asking the analyst to
+    # revise, so it must end the review loop immediately with a score of 0
+    # instead of looping to exhaustion. See R2BApprovalGate.
+    disqualifying_issue_found: bool = False
+    disqualifying_issue_type: Literal[
+        "none", "contradiction", "fraud", "suspicious_application"
+    ] = "none"
+    disqualifying_issue_reason: str = ""
 
     @model_validator(mode="after")
     def enforce_decision_contract(self) -> "R2BGraderVerdict":
@@ -221,6 +233,15 @@ class R2BGraderVerdict(BaseModel):
             # Approved with feedback is allowed (minor notes), but the grader
             # must not include scores — scoring is the Head's job.
             pass
+        if self.disqualifying_issue_found:
+            if self.approved:
+                raise ValueError(
+                    "disqualifying_issue_found requires approved=false"
+                )
+            if not self.disqualifying_issue_reason.strip():
+                raise ValueError(
+                    "disqualifying_issue_found requires disqualifying_issue_reason"
+                )
         return self
 
 
@@ -294,6 +315,24 @@ class AlchemistAnalystReport(BaseModel):
     generic dict[str, CriterionEvidence] in AnalystReport doesn't convey
     the required keys to the model.
     """
+    # Written FIRST (field order drives generation order in structured
+    # output), before any per-criterion evidence — forces the model to do
+    # the cross-source comparison as an explicit step rather than notice
+    # contradictions only incidentally while extracting evidence for 4
+    # other things. Same rationale as the Head's rationale-before-score.
+    key_facts_cross_check: str = Field(
+        min_length=1,
+        description=(
+            "List every checkable, specific fact given in more than one "
+            "source (deck, application text, video, any applicant URL) — "
+            "revenue/traction numbers, user or customer counts, launch/"
+            "founding date, team size, business model. For EACH such fact, "
+            "state what each source says about it, e.g. 'Revenue: deck "
+            "says $1M ARR (p.8); application text says $800K.' If two "
+            "sources disagree on the same fact, say so explicitly here. If "
+            "nothing repeats across sources, say so."
+        ),
+    )
     Product_MVP_Innovation: CriterionEvidence
     Market_Potential: CriterionEvidence
     Scalability_US_Market: CriterionEvidence
@@ -333,6 +372,14 @@ class AlchemistHeadScore(BaseModel):
     override: float = Field(default=0.0, ge=-1.0, le=1.0)
     override_reasoning: str = ""
     confidence: Literal["low", "medium", "high"]
+    # See R2BHeadScore disqualification fields — same contract.
+    contradiction_found: bool = False
+    contradiction_reason: str = ""
+    disqualifying_issue_found: bool = False
+    disqualifying_issue_type: Literal[
+        "none", "contradiction", "fraud", "suspicious_application"
+    ] = "none"
+    disqualifying_issue_reason: str = ""
 
     def to_head_score(self) -> "R2BHeadScore":
         """Convert to the generic R2BHeadScore format for averaging."""
@@ -353,6 +400,11 @@ class AlchemistHeadScore(BaseModel):
             override=self.override,
             override_reasoning=self.override_reasoning,
             confidence=self.confidence,
+            contradiction_found=self.contradiction_found,
+            contradiction_reason=self.contradiction_reason,
+            disqualifying_issue_found=self.disqualifying_issue_found,
+            disqualifying_issue_type=self.disqualifying_issue_type,
+            disqualifying_issue_reason=self.disqualifying_issue_reason,
         )
 
 
@@ -375,6 +427,20 @@ class R2BHeadScore(BaseModel):
     override: float = Field(default=0.0, ge=-1.0, le=1.0)
     override_reasoning: str = ""
     confidence: Literal["low", "medium", "high"]
+    # Set true only for a genuine, material contradiction between sources
+    # (e.g. deck vs video vs website disagreeing on a real claim) — not
+    # merely unverified or missing evidence. Kept for backward compatibility;
+    # new Alchemist runs also use the broader disqualifying_issue_* fields.
+    contradiction_found: bool = False
+    contradiction_reason: str = ""
+    # Confirmed issues that should score the whole application 0. This is
+    # intentionally broader than contradiction so fraud/template-like or
+    # materially suspicious applications do not receive ordinary rubric scores.
+    disqualifying_issue_found: bool = False
+    disqualifying_issue_type: Literal[
+        "none", "contradiction", "fraud", "suspicious_application"
+    ] = "none"
+    disqualifying_issue_reason: str = ""
 
     @model_validator(mode="after")
     def enforce_score_contract(self) -> "R2BHeadScore":

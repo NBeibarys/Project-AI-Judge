@@ -329,6 +329,11 @@ class AdkReviewWorkflow:
             "override": flat.get("override", 0.0),
             "override_reasoning": flat.get("override_reasoning", ""),
             "confidence": flat.get("confidence", "medium"),
+            "contradiction_found": flat.get("contradiction_found", False),
+            "contradiction_reason": flat.get("contradiction_reason", ""),
+            "disqualifying_issue_found": flat.get("disqualifying_issue_found", False),
+            "disqualifying_issue_type": flat.get("disqualifying_issue_type", "none"),
+            "disqualifying_issue_reason": flat.get("disqualifying_issue_reason", ""),
         }
 
     def _average_head_samples(self, samples: list[dict]) -> dict:
@@ -354,6 +359,51 @@ class AdkReviewWorkflow:
                     "Manual review required."
                 ),
                 "confidence": "n/a",
+                "human_review_flag": True,
+            }
+
+        # A confirmed, material contradiction (deck vs video vs website vs
+        # application text disagreeing on a real claim), OR a broader
+        # disqualifying issue the Head itself noticed (fraud, a lie,
+        # a materially suspicious application) even though the grader had
+        # already approved the evidence — either overrides the whole
+        # application's score to 0, regardless of the averaged criterion
+        # scores. Any single valid sample flagging either is enough — a
+        # false negative here is worse than a false positive, and a human
+        # reviews the flagged reason before it's treated as final.
+        contradiction_samples = [s for s in valid if s.get("contradiction_found")]
+        disqualified_samples = [s for s in valid if s.get("disqualifying_issue_found")]
+        if contradiction_samples or disqualified_samples:
+            reasons = "; ".join(
+                s.get("contradiction_reason", "").strip()
+                for s in contradiction_samples
+                if s.get("contradiction_reason", "").strip()
+            )
+            disq_reasons = "; ".join(
+                f"{s.get('disqualifying_issue_type', 'issue')}: "
+                f"{s.get('disqualifying_issue_reason', '').strip()}"
+                for s in disqualified_samples
+                if s.get("disqualifying_issue_reason", "").strip()
+            )
+            all_reasons = "; ".join(r for r in (reasons, disq_reasons) if r)
+            return {
+                "score": 0,
+                "reasoning": json.dumps(
+                    {
+                        "criterion_scores": {c: 0 for c in self.program_config.rubric_criteria},
+                        "criterion_rationale": {
+                            c: f"Application scored 0: confirmed issue — {all_reasons}"
+                            for c in self.program_config.rubric_criteria
+                        },
+                        "n_samples": len(samples),
+                        "n_valid": len(valid),
+                        "n_failed": len(samples) - len(valid),
+                        "contradiction_flagged_by": len(contradiction_samples),
+                        "disqualifying_issue_flagged_by": len(disqualified_samples),
+                    },
+                    ensure_ascii=False,
+                ),
+                "confidence": "high",
                 "human_review_flag": True,
             }
 

@@ -149,10 +149,14 @@ def r2b_gate_decision(verdict: dict, attempt: int) -> tuple[bool, bool]:
 
     The R2B grader only verifies (no score). approve=true means evidence is
     grounded and complete; the gate exits the loop so the Head can score.
-    Max 3 iterations per spec.
+    Max 3 iterations per spec. A confirmed disqualifying issue (see
+    ``disqualifying_issue_found`` in R2BGraderVerdict) always counts as
+    exhausted immediately, regardless of attempt count — a lie can't be
+    fixed by another analyst revision.
     """
     approved = bool(verdict.get("approved"))
-    exhausted = (not approved) and attempt >= 3
+    disqualified = bool(verdict.get("disqualifying_issue_found"))
+    exhausted = disqualified or ((not approved) and attempt >= 3)
     return approved, exhausted
 
 
@@ -176,6 +180,7 @@ class R2BApprovalGate(BaseAgent):
         attempt = int(state.get("attempt", 1))
         verdict = _as_dict(state.get("grader_verdict", {}))
         approved, exhausted = r2b_gate_decision(verdict, attempt)
+        disqualified = bool(verdict.get("disqualifying_issue_found"))
 
         delta = {
             "grader_feedback": verdict.get("feedback", ""),
@@ -184,6 +189,25 @@ class R2BApprovalGate(BaseAgent):
         if approved:
             delta["evidence_approved"] = True
             delta["human_review_flag"] = False
+        elif disqualified:
+            # The grader confirmed the applicant (not the analyst) made a
+            # false/fabricated/materially misleading claim. This can't be
+            # fixed by another analyst revision, so it exits the loop
+            # immediately (even on attempt 1) with a definitive 0 — not the
+            # generic "rejected 3 times, score: None" escalation, which
+            # left these rows stuck in human-review limbo with no score.
+            issue_type = verdict.get("disqualifying_issue_type", "none")
+            issue_reason = verdict.get("disqualifying_issue_reason", "")
+            delta["evidence_approved"] = False
+            delta["final_result"] = {
+                "score": 0,
+                "reasoning": (
+                    f"Application scored 0: confirmed {issue_type} — "
+                    f"{issue_reason}"
+                ),
+                "confidence": "high",
+            }
+            delta["human_review_flag"] = True
         elif exhausted:
             delta["evidence_approved"] = False
             delta["final_result"] = {

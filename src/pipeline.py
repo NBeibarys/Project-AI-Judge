@@ -301,7 +301,14 @@ def process_row(
         # sheet's structure (which has formulas referencing specific
         # columns already).
         reasoning = f"[NEEDS HUMAN REVIEW] {reasoning}"
-        score = ""
+        # Only blank the score when it's genuinely unknown (evidence never
+        # approved / all Head samples failed). A confirmed disqualification
+        # (lie/fraud/contradiction) already decided the score is 0 — that's
+        # a real, deliberate result, not an unresolved one, and blanking it
+        # here was silently erasing every disqualification override before
+        # it ever reached the sheet.
+        if score is None:
+            score = ""
 
     # No GCS cleanup is needed: Tier-2 now uploads exclusively to the Gemini
     # Files API, which auto-expires objects after 48 hours. The previous

@@ -110,21 +110,6 @@ vocal tone, visible reading material or teleprompter, and audio/lip-sync
 mismatch. Note timestamps where possible. Explicitly flag scripted, recited,
 staged, or dubbed delivery.
 
-WEB RESEARCH (claim verification):
-After extracting evidence, search the web to verify key claims the applicant
-makes — competition wins, revenue numbers, company names, GitHub repos,
-published work, awards, or other verifiable assertions. Use the google_search
-tool for each claim worth verifying. Tag each piece of evidence with a
-verification status in the "verification" field:
-- "verified": web search found supporting evidence for the claim
-- "unverified": web search found no evidence (DO NOT penalize — absence of
-  evidence is NOT evidence of absence; the claim may simply not be indexed)
-- "contradicted": web search found evidence that contradicts the claim (flag
-  this for the grader to review)
-Only tag evidence as "contradicted" if you found clear, specific contradictory
-evidence — not merely because you couldn't find confirmation. When in doubt,
-leave verification unset or mark "unverified".
-
 {FELLOWSHIP_V2_RUBRIC_TEXT}
 
 You DO NOT SCORE. You only extract evidence. Do not assign numbers or evaluate
@@ -505,20 +490,36 @@ concrete evidence — quote or closely paraphrase; never invent unsupported clai
 If no pitch deck was provided, state that explicitly in your evidence for
 Product/MVP & Innovation so the grader can flag the missing required source.
 
-WEB RESEARCH (claim verification):
-After extracting evidence, search the web to verify key claims the applicant
-makes — competition wins, revenue numbers, company names, GitHub repos,
-published work, patents, awards, or other verifiable assertions. Use the
-google_search tool for each claim worth verifying. Tag each piece of evidence
-with a verification status in the "verification" field:
-- "verified": web search found supporting evidence for the claim
-- "unverified": web search found no evidence (DO NOT penalize — absence of
-  evidence is NOT evidence of absence; the claim may simply not be indexed)
-- "contradicted": web search found evidence that contradicts the claim (flag
-  this for the grader to review)
-Only tag evidence as "contradicted" if you found clear, specific contradictory
-evidence — not merely because you couldn't find confirmation. When in doubt,
-leave verification unset or mark "unverified".
+CROSS-SOURCE CONSISTENCY (claim verification) — MANDATORY FIRST STEP:
+You do not have web search — do not claim to have searched the web or
+verified anything externally. Instead, cross-check claims AGAINST EACH OTHER
+across the sources you were given (pitch deck, application text, video, and
+any applicant-provided URL you can read via url_context).
+
+Before writing ANY per-criterion evidence, fill in "key_facts_cross_check"
+first. Go through the deck, the application text, the video, and any
+applicant URL, and pull out every specific, checkable fact that appears in
+more than one place — revenue/traction numbers, user or customer counts,
+launch or founding date, team size, business model. Write down what each
+source says about each one, side by side. Do this systematically, not just
+"if something jumps out" — a contradiction you don't actively look for is
+one you will miss. If nothing repeats across sources, say so plainly instead
+of leaving this blank.
+
+Only after that comparison, tag each piece of per-criterion evidence with a
+verification status in the "verification" field, using what you just found:
+- "verified": the claim is corroborated by at least one other source you
+  were given (e.g. the deck's traction number matches the application text)
+- "unverified": the claim appears in only one source, with nothing in the
+  other sources to corroborate or dispute it (DO NOT penalize — a claim
+  appearing in only one source is normal, not suspicious, by itself)
+- "contradicted": two of your given sources make claims about the same fact
+  that cannot both be true (e.g. the deck says "200+ active restaurants" but
+  the application says the product launched 2 days ago with $0 revenue) —
+  this MUST match something you already surfaced in key_facts_cross_check
+Only tag evidence as "contradicted" if you can point to the exact conflicting
+statements in two sources — not a guess, and not merely because a claim is
+unverified.
 
 {ALCHEMIST_RUBRIC_TEXT}
 
@@ -574,21 +575,64 @@ application text, optional video). Check that:
 Video is OPTIONAL. Do NOT reject evidence solely because no video was provided.
 Missing video must not affect approval.
 
-CONTRADICTED EVIDENCE:
-If the analyst tagged evidence as "contradicted" (web search found evidence
-that contradicts the claim), verify the contradiction yourself before rejecting.
-Check the web evidence cited. If the contradiction is real and the applicant's
-claim is materially false, set approved=false and flag the specific
-contradiction in your feedback. If the contradiction is minor or the analyst
-misread the web evidence, you may approve with a note correcting the record.
+CONTRADICTED EVIDENCE — DISTINGUISH A LIE FROM A REVISABLE GAP:
+Neither you nor the analyst has web search — do not treat anything as
+externally fact-checked. If the analyst tagged evidence as "contradicted"
+(two of the applicant's OWN sources — deck, application text, video, or a
+URL the applicant themselves provided — disagree on a fact that cannot both
+be true), verify the contradiction yourself against those same sources
+before deciding what to do. Then pick ONE of two outcomes — do not default
+to the revision path just because rejecting feels safer:
+
+1. REVISABLE GAP: the analyst's evidence write-up is sloppy, incomplete, or
+   misread the source — the underlying application is not dishonest, the
+   analyst's report of it is just wrong or thin. Set approved=false and give
+   exact, actionable correction instructions in feedback so the analyst can
+   fix its report. The applicant did nothing wrong here.
+
+   This also covers two numbers that differ but have a reasonable, innocent
+   explanation reconciling them — rounding ("$4,500+" vs "$4,235" is an
+   approximation, not a lie), different time periods or snapshots ("total
+   revenue" vs "this year's revenue"), a projection vs an actual, or a
+   gross vs net figure. Before you call anything a contradiction, actively
+   ask: is there ANY plausible, reasonable explanation that lets both
+   statements be true at once? If yes, this is NOT a contradiction — treat
+   it as ordinary evidence (verified/unverified), not disqualifying, no
+   matter how the analyst tagged it.
+
+2. CONFIRMED CONTRADICTION / FRAUD: two of the applicant's own sources make
+   claims that CANNOT both be true under any reasonable reading — there is
+   no rounding, timeframe, or definitional explanation that reconciles them
+   (e.g. "launched 2 days ago with $0 revenue" cannot be reconciled with
+   "200+ active restaurants already using the product" — no reasonable
+   interpretation makes both true). Or the application otherwise shows
+   clear signs of fabrication (plagiarized or impersonated pitch, a team
+   member or company you can see does not match across sources) or is
+   materially misleading, templated/placeholder nonsense, or internally
+   incoherent enough that no rubric score should reward it. This is NOT
+   something the analyst can fix by rewriting its report — re-sending it
+   for revision would just loop pointlessly. Set approved=false AND
+   disqualifying_issue_found=true, with disqualifying_issue_type set to
+   "contradiction" (two of the applicant's own sources conflict with no
+   reasonable explanation), "fraud" (fabricated/impersonated/plagiarized
+   claims), or "suspicious_application" (materially misleading/incoherent/
+   templated application) as fits best, and disqualifying_issue_reason
+   quoting the exact conflicting statements, which sources they came from,
+   and explicitly why no reasonable explanation reconciles them. This ends
+   the review immediately with a score of 0 for the whole application —
+   only set it when you are confident, not on a guess or a merely
+   "unverified" claim.
 
 The analyst may also tag evidence as "verified" or "unverified". Do NOT reject
-evidence merely because it is "unverified" — absence of web evidence does not
-mean the claim is false. Only "contradicted" evidence requires your review.
+evidence, and do NOT set disqualifying_issue_found, merely because it is
+"unverified" — a claim appearing in only one source is normal, not suspicious,
+by itself. Only a genuine "contradicted" finding between two of the
+applicant's own sources, which you have personally confirmed, can trigger
+disqualification.
 
-If any evidence is unreliable, incomplete, or missing, set approved=false and
-give exact, actionable correction instructions in feedback so the analyst can
-revise. Do not include any scores.
+If any evidence is unreliable, incomplete, or missing for reasons unrelated
+to dishonesty, set approved=false and give exact, actionable correction
+instructions in feedback so the analyst can revise. Do not include any scores.
 
 If the evidence is grounded, complete, and covers all 4 criteria (with a pitch
 deck provided), set approved=true.
@@ -630,6 +674,24 @@ Final score = average of the 4 criterion scores. You may adjust the final score
 by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
 override_reasoning).
 
+DISQUALIFICATION CHECK (separate from scoring — read carefully):
+Before scoring, check whether the approved evidence contains a genuine,
+material issue that should disqualify the application:
+- "contradiction": sources disagree on a real, checkable claim (revenue,
+  team composition, business model, customer counts, launch/traction).
+- "fraud": evidence indicates fabricated, impersonated, copied, or knowingly
+  false claims.
+- "suspicious_application": the application appears materially misleading,
+  template/placeholder-like, internally incoherent, or otherwise unreliable
+  enough that a normal rubric score would reward untrustworthy evidence.
+
+This is different from evidence being merely unverified or missing, which is
+NOT a disqualification by itself. Only flag an issue you can point to
+concretely. If you find one, set disqualifying_issue_found=true and explain
+the specific issue and sources in disqualifying_issue_reason. This overrides
+normal scoring for the whole application downstream, so only set it when you
+are confident the issue is real, not a guess.
+
 {ALCHEMIST_RUBRIC_TEXT}
 
 Output EXACTLY this JSON structure (no other format):
@@ -646,7 +708,12 @@ Output EXACTLY this JSON structure (no other format):
   "final_score": <float, average of 4 scores>,
   "override": 0.0,
   "override_reasoning": "",
-  "confidence": "low|medium|high"
+  "confidence": "low|medium|high",
+  "contradiction_found": <true only for a confirmed, material contradiction — false otherwise>,
+  "contradiction_reason": "<specific conflicting claims and their sources, or empty string>",
+  "disqualifying_issue_found": <true for confirmed contradiction, fraud, or suspicious_application — false otherwise>,
+  "disqualifying_issue_type": "none|contradiction|fraud|suspicious_application",
+  "disqualifying_issue_reason": "<specific issue and sources, or empty string>"
 }}
 
 Analyst report (approved evidence):
