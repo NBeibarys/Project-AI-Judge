@@ -58,7 +58,7 @@ def fetch_sheet_row(sheets_service, sheet_id: str, sheet_name: str, row_number: 
         sheets_service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=f"{sheet_name}!{row_number}:{row_number}")
-        .execute()
+        .execute(num_retries=5)
     )
     values = result.get("values", [])
     return values[0] if values else []
@@ -79,7 +79,7 @@ def read_sheet_rows(sheets_service, sheet_id: str, sheet_range: str, header_row:
         sheets_service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=sheet_range)
-        .execute()
+        .execute(num_retries=5)
     )
     values = result.get("values", [])
     if len(values) < header_row:
@@ -154,7 +154,7 @@ def write_row_result(
             range=f"{sheet_name}!{start_col}{sheet_row_number}:{end_col}{sheet_row_number}",
             valueInputOption="RAW",
             body={"values": [ordered_values]},
-        ).execute()
+        ).execute(num_retries=5)
         return
     for idx, value in ((score_idx, score), (reasoning_idx, reasoning)):
         letter = _col_letter(idx + 1)
@@ -163,7 +163,7 @@ def write_row_result(
             range=f"{sheet_name}!{letter}{sheet_row_number}",
             valueInputOption="RAW",
             body={"values": [[value]]},
-        ).execute()
+        ).execute(num_retries=5)
 
 
 def _col_letter(col_1_indexed: int) -> str:

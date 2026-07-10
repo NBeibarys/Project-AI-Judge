@@ -107,8 +107,18 @@ with st.sidebar:
     checkpoint_exists = os.path.isfile(config.checkpoint_path)
     if checkpoint_exists:
         with open(config.checkpoint_path) as f:
-            done_count = len(json.load(f))
-        st.caption(f"{done_count} row(s) marked done.")
+            checkpoint_data = json.load(f)
+        status_counts = {"done": 0, "human_review": 0, "failed": 0}
+        for entry in checkpoint_data.values():
+            status = entry.get("status")
+            if status in status_counts:
+                status_counts[status] += 1
+        skipped_next_run = status_counts["done"] + status_counts["human_review"]
+        st.caption(
+            f"{skipped_next_run} row(s) will be skipped next run "
+            f"({status_counts['done']} done, {status_counts['human_review']} human review) · "
+            f"{status_counts['failed']} row(s) failed and will retry next run."
+        )
     else:
         st.caption("No checkpoint file yet.")
 
