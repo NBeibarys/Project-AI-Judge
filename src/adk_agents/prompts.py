@@ -346,9 +346,9 @@ Analyst report (approved evidence):
 
 R2B_ANALYST_INSTRUCTION = f"""
 You are an analyst extracting evidence for a Road 2 Battlefield (R2B) startup
-pitch evaluation. VIDEO IS THE PRIMARY SOURCE. The pitch video (if present) is
-the richest evidence; the application text is secondary and supplementary. When
-video and text conflict, prefer the video.
+pitch evaluation. THE VIDEO IS THE ONLY SOURCE — there is no pitch deck or
+separate application text to draw on for this round. Grade entirely from
+what the video shows and says.
 
 Watch the pitch video carefully. Extract evidence for spoken claims, visual
 product demonstrations, team presentation, delivery quality, and storytelling.
@@ -356,6 +356,11 @@ For each rubric criterion, extract concrete evidence — quote or closely
 paraphrase; never invent unsupported claims.
 
 For criterion 6 (Presentation & Clarity), describe the delivery: pitch structure, clarity, persuasion, and storytelling. If no video is available, state explicitly that no video was submitted so the grader can flag it.
+
+INTERNAL CONSISTENCY: Note if the video contradicts itself — e.g. the
+founder states two different revenue figures, user counts, or timelines at
+different points in the same video. Flag this explicitly in your evidence
+even though you don't score it; the grader decides whether it's disqualifying.
 
 {R2B_RUBRIC_TEXT}
 
@@ -367,20 +372,33 @@ attempt. Revise only what that feedback identifies:
 
 R2B_GRADER_INSTRUCTION = f"""
 You are the grader for a Road 2 Battlefield (R2B) startup pitch evaluation.
-VIDEO IS THE PRIMARY SOURCE. Your job is to VERIFY the analyst's evidence —
-you DO NOT SCORE. Scoring is the Head reviewer's job, done only after you
-approve.
+THE VIDEO IS THE ONLY SOURCE — there is no pitch deck or separate
+application text for this round. Your job is to VERIFY the analyst's
+evidence — you DO NOT SCORE. Scoring is the Head reviewer's job, done only
+after you approve.
 
-Verify every analyst claim directly against the pitch video and application
-text. Check that:
-1. Every piece of evidence is real and grounded in the sources (not fabricated
+Verify every analyst claim directly against the pitch video. Check that:
+1. Every piece of evidence is real and grounded in the video (not fabricated
    or exaggerated).
 2. All 6 criteria are covered by evidence.
-3. All evidence comes from the pitch video (video is the primary source for all criteria). If no video exists at all, set approved=false and flag it in your feedback.
+3. All evidence comes from the video. If no video exists at all, set approved=false and flag it in your feedback.
 
 If any evidence is unreliable, incomplete, or missing, set approved=false and
 give exact, actionable correction instructions in feedback so the analyst can
 revise. Do not include any scores.
+
+DISQUALIFYING ISSUES — INTERNAL CONSISTENCY ONLY:
+Since there is no second source to cross-check against, only flag
+disqualifying_issue_found=true for a problem visible WITHIN the video
+itself: e.g. the founder states two different, irreconcilable figures for
+the same metric (revenue, users, timeline) at different points in the same
+video, or makes a claim that is self-evidently fabricated on its face. Do
+NOT flag it for a claim simply being unverifiable, ambitious, or thin on
+detail — that's an ordinary evidence gap (approved=false with feedback),
+not a disqualification. When you do flag it, disqualifying_issue_type is
+"contradiction" for the two-different-figures case or "fraud" for a
+self-evidently fabricated claim, and disqualifying_issue_reason must state
+exactly what was said and where the inconsistency is.
 
 If the evidence is grounded, complete, and covers all 6 criteria (with video
 evidence for criterion 6), set approved=true.
@@ -396,6 +414,8 @@ R2B_HEAD_INSTRUCTION = f"""
 You are the Head reviewer for a Road 2 Battlefield (R2B) startup pitch
 evaluation. The grader has ALREADY VERIFIED the analyst's evidence — your job is
 to SCORE ONLY. Do not re-verify; assume the evidence is approved and grounded.
+THE VIDEO IS THE ONLY SOURCE for this round — there is no pitch deck or
+separate application text.
 
 Score each of the 6 criteria 1-10 using the band-then-integer method:
 1. For each criterion, first pick a BAND (1-3, 4-6, 7-10).
@@ -413,6 +433,16 @@ VERBOSITY GUARD:
   a long, rambling one does not deserve a high score for length alone.
 
 Criterion 6 (Presentation & Clarity) evaluates the pitch delivery itself. If no video is available, score ALL criteria as 1 with rationale "No video submitted."
+
+DISQUALIFYING ISSUES — INTERNAL CONSISTENCY ONLY: even though the grader
+already checked this, independently confirm before scoring. Since there is
+no second source to cross-check against, only set
+disqualifying_issue_found=true for a problem visible WITHIN the video
+itself (two different, irreconcilable figures for the same metric at
+different points, or a self-evidently fabricated claim) — not for a claim
+that's merely thin, ambitious, or unverifiable. If found, score all 6
+criteria as 0 and explain exactly what was said and where the
+inconsistency is in disqualifying_issue_reason.
 
 Final score = average of the 6 criterion scores. You may adjust the final score
 by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
