@@ -212,6 +212,53 @@ def write_row_result(
         ).execute(num_retries=5)
 
 
+def write_multi_row_result(
+    sheets_service,
+    sheet_id: str,
+    sheet_name: str,
+    sheet_row_number: int,
+    col_map: dict,
+    criterion_scores: dict,
+    total_score,
+    notes: str,
+):
+    """Write R2B's multi-column output: one cell per rubric criterion, plus
+    Total Score and Comments/Notes.
+
+    Writes each cell individually rather than batching a range update —
+    unlike write_row_result's adjacent-pair case, these 8 target columns
+    aren't guaranteed to be contiguous with each other if the sheet is
+    ever restructured, and per-row grading already involves several LLM
+    calls that dominate cost/time, so 8 small Sheets API calls here is
+    negligible.
+    """
+    for criterion, col_idx in col_map["criteria"].items():
+        value = criterion_scores.get(criterion, "")
+        letter = _col_letter(col_idx + 1)
+        sheets_service.spreadsheets().values().update(
+            spreadsheetId=sheet_id,
+            range=f"{sheet_name}!{letter}{sheet_row_number}",
+            valueInputOption="RAW",
+            body={"values": [[value]]},
+        ).execute(num_retries=5)
+
+    total_letter = _col_letter(col_map["total_score"] + 1)
+    sheets_service.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"{sheet_name}!{total_letter}{sheet_row_number}",
+        valueInputOption="RAW",
+        body={"values": [[total_score if total_score is not None else ""]]},
+    ).execute(num_retries=5)
+
+    notes_letter = _col_letter(col_map["notes"] + 1)
+    sheets_service.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"{sheet_name}!{notes_letter}{sheet_row_number}",
+        valueInputOption="RAW",
+        body={"values": [[notes]]},
+    ).execute(num_retries=5)
+
+
 def _col_letter(col_1_indexed: int) -> str:
     """1 -> A, 26 -> Z, 27 -> AA. Sheets API ranges use letters, not indices."""
     letters = ""
