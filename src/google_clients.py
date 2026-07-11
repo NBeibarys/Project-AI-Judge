@@ -21,6 +21,19 @@ _DRIVE_ID_PATTERNS = [
     re.compile(r"[?&]id=([a-zA-Z0-9_-]{10,})"),
 ]
 
+# A Drive FOLDER link (drive.google.com/drive/folders/<ID>) matches neither
+# pattern above — extract_drive_file_id correctly returns None for it — but
+# a caller that then falls back to treating the raw URL as a downloadable
+# file (e.g. an HTTPS GET expecting a PDF) ends up trying to fetch a Drive
+# folder-listing page, which fails slowly and non-deterministically instead
+# of with a clear, immediate error. Detecting this shape explicitly lets
+# callers fail fast with an honest "this is a folder, not a file" message.
+_DRIVE_FOLDER_PATTERN = re.compile(r"drive\.google\.com/drive/folders/")
+
+
+def is_drive_folder_url(url: str) -> bool:
+    return bool(url) and bool(_DRIVE_FOLDER_PATTERN.search(url))
+
 
 def _credentials(service_account_path: str):
     return service_account.Credentials.from_service_account_file(
@@ -121,6 +134,39 @@ def resolve_output_columns(
     else:
         raise RuntimeError(f"Reasoning column '{reasoning_column_name}' not found.")
     return col_map
+
+
+def resolve_multi_output_columns(
+    header: list,
+    criterion_column_names: dict,
+    total_score_column_name: str,
+    notes_column_name: str,
+) -> dict:
+    """Find the 0-indexed columns for R2B's multi-column output: one per
+    rubric criterion, plus Total Score and Comments/Notes.
+
+    Same fail-loud philosophy as resolve_output_columns: a missing column
+    means the sheet doesn't match what this program expects, and silently
+    skipping it would mean scores go nowhere without anyone noticing.
+    """
+    criteria_cols = {}
+    for criterion, column_header in criterion_column_names.items():
+        if column_header not in header:
+            raise RuntimeError(
+                f"Criterion column '{column_header}' (for '{criterion}') not found."
+            )
+        criteria_cols[criterion] = header.index(column_header)
+
+    if total_score_column_name not in header:
+        raise RuntimeError(f"Total score column '{total_score_column_name}' not found.")
+    if notes_column_name not in header:
+        raise RuntimeError(f"Notes column '{notes_column_name}' not found.")
+
+    return {
+        "criteria": criteria_cols,
+        "total_score": header.index(total_score_column_name),
+        "notes": header.index(notes_column_name),
+    }
 
 
 def write_row_result(
