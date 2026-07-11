@@ -65,6 +65,14 @@ class ProgramConfig:
     # Output columns written back to the sheet.
     score_column_name: str
     reasoning_column_name: str
+    # Multi-column output (R2B's video-only round): when set, one score
+    # column per rubric criterion, a Total Score column, and a
+    # Comments/Notes column are written instead of score_column_name/
+    # reasoning_column_name. None (default) keeps every other program on
+    # the existing single score+reasoning pair — this is purely additive.
+    criterion_column_names: dict[str, str] | None = None
+    total_score_column_name: str | None = None
+    notes_column_name: str | None = None
     # Head scorer instruction (only used when uses_separate_head=True).
     head_instruction: str = ""
     # Whether this program runs a dedicated web_verifier agent between the
@@ -167,6 +175,20 @@ R2B_CONFIG = ProgramConfig(
     top_label_row_env="R2B_TOP_LABEL_ROW",
     score_column_name="AI",
     reasoning_column_name="AI Reasoning",
+    # This R2B round's "AI" tab has one column per rubric criterion instead
+    # of a combined score+reasoning pair (score_column_name/
+    # reasoning_column_name above are kept for backward compatibility but
+    # unused whenever criterion_column_names is set — see process_row).
+    criterion_column_names={
+        "Problem & Solution": "Problem & Solution (10 pts max)",
+        "Market Potential": "Market Potential (10 pts max)",
+        "Product/MVP & Innovation": "Product/MVP & Innovation (10 pts max)",
+        "Team Strength": "Team Strength (10 pts max)",
+        "Business Model": "Business Model (10 pts max)",
+        "Presentation & Clarity": "Presentation & Clarity (10 pts)",
+    },
+    total_score_column_name="Total Score",
+    notes_column_name="Comments / Notes",
     excluded_header_substrings=(),
     excluded_header_names=frozenset({"", "AI", "AI_Reasoning"}),
 )
