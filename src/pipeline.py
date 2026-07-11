@@ -464,7 +464,16 @@ def process_row(
     try:
         final_state = workflow.invoke(initial_state)
     except Exception as exc:
-        if _row_has_video(initial_state):
+        # Retrying without video only helps when something else remains to
+        # grade on afterward (Alchemist: deck+text; Fellowship V2: text).
+        # For a video-ONLY round (R2B this round — see
+        # criterion_column_names, only set for that case), dropping video
+        # leaves nothing, so the retry is guaranteed to fail the exact same
+        # way — confirmed live: ~90s wasted on an identical second failure.
+        # Skip straight to run_batch's 3-strikes escalation instead, which
+        # gives genuinely independent analyst attempts across separate runs.
+        no_fallback_without_video = bool(config.program_config.criterion_column_names)
+        if _row_has_video(initial_state) and not no_fallback_without_video:
             final_state = _retry_without_video(workflow, initial_state, exc)
         else:
             raise
