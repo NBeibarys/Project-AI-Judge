@@ -34,6 +34,11 @@ from .video_ingestion import ingest_pitch_deck, ingest_video_for_r2b
 # Header exclusion lists are program-specific — see ProgramConfig fields
 # excluded_header_substrings and excluded_header_names in src/programs.py.
 
+# After this many consecutive failures on the same row, stop retrying
+# blindly and escalate to human review instead — matches the "3 attempts"
+# convention used elsewhere in this codebase (e.g. R2B's verify loop).
+FAILURE_ESCALATION_THRESHOLD = 3
+
 
 def _normalize_for_match(text: str) -> str:
     """Strip accents — used only for email-column detection, where ASCII
@@ -45,15 +50,90 @@ def _normalize_for_match(text: str) -> str:
     ).lower()
 
 
-def _derive_row_id(header: list, row: list, sheet_row_number: int) -> str:
+# Markers a human adds directly into the Startup Name cell for applicants
+# who didn't actually show up to pitch (confirmed real examples: "Example One -
+# won't pitch", "Example Two no response", "Example Co - didn't
+# respond"). Substring match on the normalized (lowercased, accent-
+# stripped) name — these rows are skipped entirely before any LLM call.
+_NO_SHOW_MARKERS = (
+    "no response",
+    "won't pitch",
+    "wont pitch",
+    "didn't respond",
+    "didnt respond",
+    "did not respond",
+    "didn't come",
+    "didnt come",
+    "did not come",
+)
+
+
+def _is_no_show(startup_name: str) -> bool:
+    name = _normalize_for_match(startup_name)
+    return any(marker in name for marker in _NO_SHOW_MARKERS)
+
+
+def _find_duplicate_emails(header: list, rows: list) -> frozenset:
+    """Emails that appear on more than one row — confirmed live: the same
+    email is sometimes reused across multiple genuinely different
+    applications (one person submitting more than one startup). Since
+    checkpointing keys by email, a plain email key would collide: the
+    first such row gets graded and checkpointed, and checkpoint.is_done()
+    then silently skips every later row sharing that email forever,
+    leaving it permanently blank with zero explanation (confirmed: 5 real
+    collisions found in one sheet). _derive_row_id disambiguates only
+    these confirmed-colliding emails, leaving the plain-email key
+    unchanged for the (much more common) non-colliding case — so this
+    fix doesn't invalidate checkpoint entries for every already-graded row.
+    """
+    from collections import Counter
+    emails = []
+    for row in rows:
+        for i, col in enumerate(header):
+            if "email" in _normalize_for_match(col):
+                if i < len(row) and row[i].strip():
+                    emails.append(row[i].strip().lower())
+                break
+    counts = Counter(emails)
+    return frozenset(email for email, n in counts.items() if n > 1)
+
+
+_NAME_COLUMN_HINTS = ("startup name", "company name", "team name", "project name")
+
+
+def _find_name_column_index(header: list) -> int | None:
+    for i, col in enumerate(header):
+        if any(hint in _normalize_for_match(col) for hint in _NAME_COLUMN_HINTS):
+            return i
+    return None
+
+
+def _derive_row_id(
+    header: list,
+    row: list,
+    sheet_row_number: int,
+    duplicate_emails: frozenset = frozenset(),
+) -> str:
     """Prefer an email column as the stable applicant ID (survives sheet
     re-sorts); fall back to the sheet row number if no email column is
     found, since *some* stable key is required for checkpointing.
+
+    See _find_duplicate_emails: an email in duplicate_emails is
+    disambiguated with the startup/company/team/project name column when
+    one exists and is non-blank for this row (still survives a resort,
+    unlike the row-number fallback used when no such column is found or
+    it's blank here).
     """
     for i, col in enumerate(header):
         if "email" in _normalize_for_match(col):
             if i < len(row) and row[i].strip():
-                return row[i].strip().lower()
+                email = row[i].strip().lower()
+                if email in duplicate_emails:
+                    name_idx = _find_name_column_index(header)
+                    if name_idx is not None and name_idx < len(row) and row[name_idx].strip():
+                        return f"{email}|{row[name_idx].strip().lower()}"
+                    return f"{email}|row_{sheet_row_number}"
+                return email
             break
     return f"row_{sheet_row_number}"
 
@@ -138,6 +218,49 @@ def _submitted_pitch_deck_url(header: list, row: list) -> str:
     return ""
 
 
+def _row_has_video(state: dict) -> bool:
+    return bool(
+        state.get("video_data")
+        or state.get("video_url")
+        or state.get("video_requires_url_context")
+    )
+
+
+def _retry_without_video(workflow, initial_state: dict, exc: Exception) -> dict:
+    """The row had a video attached (as downloaded bytes, a direct URI, or
+    a webpage for the analyst's url_context tool to read) and
+    workflow.invoke failed. Confirmed live across three different failure
+    signatures on video-heavy rows — a 429 RESOURCE_EXHAUSTED from an
+    oversized video payload, a 400 from Vertex's url_context fetch hitting
+    its own ~15MB size cap on a webpage video source (max_bytes_fetched:
+    15728640), and an unexplained 400 INVALID_ARGUMENT specific to one
+    video/deck combination during Head scoring — that trying to enumerate
+    and special-case each exact error is a losing game; the common thread
+    is always "the video, somehow". Retry once without it instead: for
+    Alchemist, the deck is the required source and is usually fine on its
+    own, so a degraded-but-real score beats an automatic human-review
+    escalation over a video-only problem.
+
+    Only escalates to human review (by letting a second failure propagate
+    to run_batch's 3-strikes safety net) if grading without the video also
+    fails for some other reason.
+    """
+    no_video_state = dict(initial_state)
+    video_size = no_video_state.pop("video_original_size_bytes", None)
+    no_video_state.pop("video_data", None)
+    no_video_state.pop("video_url", None)
+    no_video_state.pop("video_mime_type", None)
+    no_video_state.pop("video_source", None)
+    no_video_state["video_requires_url_context"] = False
+    size_note = f" ({video_size / 1e6:.0f}MB)" if video_size else ""
+    no_video_state["video_error"] = (
+        f"Video{size_note} excluded from analysis — processing failed "
+        f"({type(exc).__name__}). Scored on pitch deck and application "
+        "text only."
+    )
+    return workflow.invoke(no_video_state)
+
+
 def _build_workflow(config: Config) -> AdkReviewWorkflow:
     """Construct the workflow with program-aware models and sample count.
 
@@ -162,10 +285,20 @@ def process_row(
     checkpoint: Checkpoint,
     *,
     force: bool = False,
+    duplicate_emails: frozenset = frozenset(),
 ):
-    row_id = _derive_row_id(header, row, sheet_row_number)
+    row_id = _derive_row_id(header, row, sheet_row_number, duplicate_emails)
     if checkpoint.is_done(row_id) and not force:
         return row_id, None  # already graded in a prior run, nothing to write
+
+    for i, col in enumerate(header):
+        if _normalize_for_match(col) in ("startup name", "company name", "team name"):
+            if i < len(row) and _is_no_show(row[i]):
+                # Didn't show up to pitch — nothing to grade. No checkpoint
+                # entry either, so removing the marker text later makes the
+                # row eligible again on the next run.
+                return row_id, None
+            break
 
     initial_state = {
         "row_id": row_id,
@@ -208,6 +341,17 @@ def process_row(
         needs_tier2 = (
             resolved_video is None
             or _is_drive_url(submitted_video_url)
+            or (
+                # Any other directly-fetchable, non-YouTube URL also needs
+                # to go through Tier-2 now — not to force a download (Tier-2
+                # itself only downloads when the file is actually over
+                # Vertex's 15MB URI-fetch limit; see ingest_video_for_r2b),
+                # but because Tier-1 alone has no way to make that
+                # size-aware decision.
+                not resolved_video.requires_url_context
+                and "youtube" not in resolved_video.uri
+                and "youtu.be" not in resolved_video.uri
+            )
         )
         if needs_tier2:
             try:
@@ -228,6 +372,9 @@ def process_row(
             initial_state["video_source"] = resolved_video.source
             initial_state["video_requires_url_context"] = (
                 resolved_video.requires_url_context
+            )
+            initial_state["video_original_size_bytes"] = (
+                resolved_video.original_size_bytes
             )
             # Tier-2 succeeded: clear any stale error left by a Tier-1
             # failure. Without this, the workflow would both build the video
@@ -288,11 +435,37 @@ def process_row(
             initial_state["pitch_deck_source"] = resolved_deck.source
             initial_state["pitch_deck_chart_text"] = resolved_deck.chart_text
         except VideoResolutionError as exc:
-            # Pitch deck exists but couldn't be downloaded — still run the
-            # pipeline so the grader can note the issue.
-            initial_state["pitch_deck_error"] = str(exc)
+            # A deck link was submitted but is deterministically unfetchable
+            # (Drive folder instead of a file, Canva/Cloudflare-blocked page,
+            # a JS-rendered site with no direct export, etc.) — this is the
+            # same outcome as "no deck submitted" from the grader's
+            # perspective (the required primary source is unavailable), so
+            # short-circuit the same way: a deterministic score of 0, no LLM
+            # call. Running the full analyst->grader->head pipeline just to
+            # have it echo back "deck unavailable" wastes API calls/quota on
+            # a row that's already a known dead end, and risks a random
+            # infra failure (429/500) turning a clean, honest outcome into a
+            # silently-stuck "failed" checkpoint entry instead.
+            return row_id, {
+                "score": 0,
+                "reasoning": json.dumps({
+                    "criterion_scores": {c: 0 for c in config.program_config.rubric_criteria},
+                    "criterion_rationale": {
+                        c: f"Pitch deck could not be accessed: {exc}"
+                        for c in config.program_config.rubric_criteria
+                    },
+                }),
+                "human_review_flag": True,
+                "skipped_no_pitch_deck": True,
+            }
 
-    final_state = workflow.invoke(initial_state)
+    try:
+        final_state = workflow.invoke(initial_state)
+    except Exception as exc:
+        if _row_has_video(initial_state):
+            final_state = _retry_without_video(workflow, initial_state, exc)
+        else:
+            raise
     final_result = final_state.get("final_result", {})
     score = final_result.get("score")
     reasoning = final_result.get("reasoning", "")
@@ -366,6 +539,7 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
         reasoning_column_name=config.program_config.reasoning_column_name,
     )
 
+    duplicate_emails = _find_duplicate_emails(header, rows)
     row_id, result = process_row(
         config,
         workflow,
@@ -374,6 +548,7 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
         sheet_row_number,
         checkpoint,
         force=force,
+        duplicate_emails=duplicate_emails,
     )
     if result is None:
         return {"row_id": row_id, "skipped": True}
@@ -433,6 +608,7 @@ def run_batch(
 
     results = {}
     errors = {}
+    duplicate_emails = _find_duplicate_emails(header, rows)
 
     # max_workers bounded by config rather than len(rows) — uncapped
     # concurrency against the Gemini API at 100+ rows risks hitting
@@ -444,7 +620,7 @@ def run_batch(
             if limit is not None and submitted >= limit:
                 break
             sheet_row_number = i + config.header_row + 1 + offset  # header_row + sub-header skip + 1-indexing
-            row_id_preview = _derive_row_id(header, row, sheet_row_number)
+            row_id_preview = _derive_row_id(header, row, sheet_row_number, duplicate_emails)
             if checkpoint.is_done(row_id_preview) and not force:
                 continue
             submitted += 1
@@ -457,6 +633,7 @@ def run_batch(
                 sheet_row_number,
                 checkpoint,
                 force=force,
+                duplicate_emails=duplicate_emails,
             )
             futures[future] = (row_id_preview, sheet_row_number)
 
@@ -481,8 +658,27 @@ def run_batch(
                 ok = True
             except Exception as exc:  # noqa: BLE001 — isolate each applicant failure
                 # Provider messages may echo submitted PII, so persist only its type.
-                checkpoint.mark_failed(row_id, type(exc).__name__)
+                attempts = checkpoint.mark_failed(row_id, type(exc).__name__)
                 errors[row_id] = str(exc)
+                # A row that keeps failing the same way run after run (an
+                # oversized file, a structurally broken source URL) isn't a
+                # transient blip — retrying it forever just wastes API calls
+                # while leaving the sheet blank with zero explanation. After
+                # FAILURE_ESCALATION_THRESHOLD attempts, stop retrying and
+                # write an explicit human-review result instead, matching
+                # how every other terminal outcome is surfaced.
+                if attempts >= FAILURE_ESCALATION_THRESHOLD:
+                    reasoning = (
+                        f"[NEEDS HUMAN REVIEW] AI processing failed {attempts} times "
+                        f"in a row (most recent error: {type(exc).__name__}). This "
+                        "usually means an oversized or unreachable source file. "
+                        "Manual review required."
+                    )
+                    write_row_result(
+                        sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+                        col_map, "", reasoning,
+                    )
+                    checkpoint.mark_done(row_id, True)
             finally:
                 done_count += 1
                 if on_progress is not None:
