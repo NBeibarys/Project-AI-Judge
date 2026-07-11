@@ -41,6 +41,12 @@ from .video_ingestion import ingest_pitch_deck, ingest_video_for_r2b
 # convention used elsewhere in this codebase (e.g. R2B's verify loop).
 FAILURE_ESCALATION_THRESHOLD = 3
 
+# For R2B (video-only, no fallback source once video is dropped): total
+# attempts at the SAME analyst call within one process_row invocation,
+# before giving up and letting the row fall through to run_batch's
+# FAILURE_ESCALATION_THRESHOLD-gated escalation across separate runs.
+R2B_ANALYST_RETRY_ATTEMPTS = 3
+
 
 def _normalize_for_match(text: str) -> str:
     """Strip accents — used only for email-column detection, where ASCII
@@ -461,19 +467,35 @@ def process_row(
                 "skipped_no_pitch_deck": True,
             }
 
+    no_fallback_without_video = bool(config.program_config.criterion_column_names)
     try:
         final_state = workflow.invoke(initial_state)
     except Exception as exc:
-        # Retrying without video only helps when something else remains to
-        # grade on afterward (Alchemist: deck+text; Fellowship V2: text).
-        # For a video-ONLY round (R2B this round — see
-        # criterion_column_names, only set for that case), dropping video
-        # leaves nothing, so the retry is guaranteed to fail the exact same
-        # way — confirmed live: ~90s wasted on an identical second failure.
-        # Skip straight to run_batch's 3-strikes escalation instead, which
-        # gives genuinely independent analyst attempts across separate runs.
-        no_fallback_without_video = bool(config.program_config.criterion_column_names)
-        if _row_has_video(initial_state) and not no_fallback_without_video:
+        if no_fallback_without_video:
+            # R2B (video-only, no deck/text fallback): confirmed live that
+            # the analyst occasionally fails to produce complete structured
+            # output for this round's 6-required-criteria video schema —
+            # different exact exception each time (empty criteria dict
+            # failing Pydantic validation, or a KeyError from a downstream
+            # agent referencing analyst_report that never got set) — but a
+            # fresh, independent generation attempt on the SAME video has
+            # repeatedly succeeded cleanly on retry. Retrying without video
+            # is pointless here (nothing left to grade on), but retrying
+            # the SAME call is not: give it up to R2B_ANALYST_RETRY_ATTEMPTS
+            # total tries within this one call, matching the "3 attempts"
+            # convention already used elsewhere in this codebase, instead
+            # of requiring a whole separate "Run grading" click (and
+            # re-downloading the video) per attempt.
+            last_exc = exc
+            for _ in range(R2B_ANALYST_RETRY_ATTEMPTS - 1):
+                try:
+                    final_state = workflow.invoke(initial_state)
+                    break
+                except Exception as retry_exc:
+                    last_exc = retry_exc
+            else:
+                raise last_exc
+        elif _row_has_video(initial_state):
             final_state = _retry_without_video(workflow, initial_state, exc)
         else:
             raise
