@@ -25,7 +25,9 @@ from .google_clients import (
     fetch_sheet_row,
     get_sheets_service,
     read_sheet_rows,
+    resolve_multi_output_columns,
     resolve_output_columns,
+    write_multi_row_result,
     write_row_result,
 )
 from .video_urls import ResolvedVideo, VideoResolutionError, resolve_video_url
@@ -468,7 +470,8 @@ def process_row(
             raise
     final_result = final_state.get("final_result", {})
     score = final_result.get("score")
-    reasoning = final_result.get("reasoning", "")
+    raw_reasoning = final_result.get("reasoning", "")
+    reasoning = raw_reasoning
     human_review_flag = final_state.get("human_review_flag", False)
     if human_review_flag:
         # No dedicated flag column exists on the real sheet — fold the
@@ -489,6 +492,42 @@ def process_row(
     # Files API, which auto-expires objects after 48 hours. The previous
     # Vertex AI / GCS upload path (and its gs:// cleanup) has been removed
     # along with all GCP billing dependencies.
+
+    if config.program_config.criterion_column_names:
+        # R2B's video-only round: the sheet has one column per rubric
+        # criterion instead of a combined score+reasoning pair.
+        # raw_reasoning is the JSON blob _average_head_samples already
+        # produces (criterion_scores/criterion_rationale) — parse it back
+        # out rather than writing raw JSON into a single cell. Any path
+        # that couldn't produce real per-criterion scores (evidence never
+        # approved, all Head samples failed, video dropped and retried)
+        # writes plain text there instead, so json.loads legitimately fails
+        # and is handled, not an error case.
+        try:
+            parsed = json.loads(raw_reasoning)
+            criterion_scores = parsed.get("criterion_scores", {})
+            criterion_rationale = parsed.get("criterion_rationale", {})
+        except (json.JSONDecodeError, TypeError):
+            criterion_scores = {}
+            criterion_rationale = {}
+
+        if criterion_scores:
+            total_score = sum(criterion_scores.values()) / len(criterion_scores)
+            notes = "\n".join(
+                f"{criterion}: {criterion_rationale.get(criterion, '')}"
+                for criterion in config.program_config.rubric_criteria
+            )
+        else:
+            total_score = None
+            notes = reasoning  # the plain-text (possibly [NEEDS HUMAN REVIEW]-prefixed) message
+
+        # The caller owns completion because only it observes the Sheets commit.
+        return row_id, {
+            "criterion_scores": criterion_scores,
+            "total_score": total_score,
+            "notes": notes,
+            "human_review_flag": human_review_flag,
+        }
 
     # The caller owns completion because only it observes the Sheets commit.
     return row_id, {
@@ -533,11 +572,19 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
         )
     else:
         top_label_header = header
-    col_map = resolve_output_columns(
-        top_label_header,
-        score_column_name=config.program_config.score_column_name,
-        reasoning_column_name=config.program_config.reasoning_column_name,
-    )
+    if config.program_config.criterion_column_names:
+        col_map = resolve_multi_output_columns(
+            top_label_header,
+            config.program_config.criterion_column_names,
+            config.program_config.total_score_column_name,
+            config.program_config.notes_column_name,
+        )
+    else:
+        col_map = resolve_output_columns(
+            top_label_header,
+            score_column_name=config.program_config.score_column_name,
+            reasoning_column_name=config.program_config.reasoning_column_name,
+        )
 
     duplicate_emails = _find_duplicate_emails(header, rows)
     row_id, result = process_row(
@@ -553,15 +600,27 @@ def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
     if result is None:
         return {"row_id": row_id, "skipped": True}
 
-    write_row_result(
-        sheets_service,
-        config.sheet_id,
-        sheet_name,
-        sheet_row_number,
-        col_map,
-        result["score"],
-        result["reasoning"],
-    )
+    if config.program_config.criterion_column_names:
+        write_multi_row_result(
+            sheets_service,
+            config.sheet_id,
+            sheet_name,
+            sheet_row_number,
+            col_map,
+            result["criterion_scores"],
+            result["total_score"],
+            result["notes"],
+        )
+    else:
+        write_row_result(
+            sheets_service,
+            config.sheet_id,
+            sheet_name,
+            sheet_row_number,
+            col_map,
+            result["score"],
+            result["reasoning"],
+        )
     # Checkpoint only after the authoritative external write succeeds.
     checkpoint.mark_done(row_id, result["human_review_flag"])
     return {"row_id": row_id, **result}
@@ -600,11 +659,19 @@ def run_batch(
         top_label_header = fetch_sheet_row(sheets_service, config.sheet_id, sheet_name, config.top_label_row)
     else:
         top_label_header = header
-    col_map = resolve_output_columns(
-        top_label_header,
-        score_column_name=config.program_config.score_column_name,
-        reasoning_column_name=config.program_config.reasoning_column_name,
-    )
+    if config.program_config.criterion_column_names:
+        col_map = resolve_multi_output_columns(
+            top_label_header,
+            config.program_config.criterion_column_names,
+            config.program_config.total_score_column_name,
+            config.program_config.notes_column_name,
+        )
+    else:
+        col_map = resolve_output_columns(
+            top_label_header,
+            score_column_name=config.program_config.score_column_name,
+            reasoning_column_name=config.program_config.reasoning_column_name,
+        )
 
     results = {}
     errors = {}
@@ -645,10 +712,17 @@ def run_batch(
                 _, result = future.result()
                 if result is None:
                     continue
-                write_row_result(
-                    sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                    col_map, result["score"], result["reasoning"],
-                )
+                if config.program_config.criterion_column_names:
+                    write_multi_row_result(
+                        sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+                        col_map, result["criterion_scores"], result["total_score"],
+                        result["notes"],
+                    )
+                else:
+                    write_row_result(
+                        sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+                        col_map, result["score"], result["reasoning"],
+                    )
                 # Failed writes remain retryable rather than becoming lost grades.
                 checkpoint.mark_done(
                     row_id,
@@ -674,10 +748,16 @@ def run_batch(
                         "usually means an oversized or unreachable source file. "
                         "Manual review required."
                     )
-                    write_row_result(
-                        sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                        col_map, "", reasoning,
-                    )
+                    if config.program_config.criterion_column_names:
+                        write_multi_row_result(
+                            sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+                            col_map, {}, None, reasoning,
+                        )
+                    else:
+                        write_row_result(
+                            sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+                            col_map, "", reasoning,
+                        )
                     checkpoint.mark_done(row_id, True)
             finally:
                 done_count += 1
