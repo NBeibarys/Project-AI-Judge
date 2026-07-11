@@ -512,7 +512,7 @@ def process_row(
             criterion_rationale = {}
 
         if criterion_scores:
-            total_score = sum(criterion_scores.values()) / len(criterion_scores)
+            total_score = round(sum(criterion_scores.values()) / len(criterion_scores), 2)
             notes = "\n".join(
                 f"{criterion}: {criterion_rationale.get(criterion, '')}"
                 for criterion in config.program_config.rubric_criteria
