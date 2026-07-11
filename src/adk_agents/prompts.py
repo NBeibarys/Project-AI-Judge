@@ -10,7 +10,7 @@ averaging re-runs the Head only.
 """
 
 # ---------------------------------------------------------------------------
-# R2B rubric (6 criteria, 3-band: 1-3 / 4-6 / 7-10, video-primary)
+# R2B rubric (6 criteria, 3-band: 1-3 / 4-6 / 7-10, video-only)
 # ---------------------------------------------------------------------------
 
 R2B_RUBRIC_TEXT = """
