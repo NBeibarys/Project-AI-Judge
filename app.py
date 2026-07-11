@@ -12,6 +12,7 @@ run, whether to re-grade already-graded rows, and checkpoint reset. The
 main area shows current sheet grading state and the results of the most
 recent run.
 """
+import hashlib
 import json
 import os
 import sys
@@ -26,7 +27,7 @@ if _REPO_DIR not in sys.path:
     sys.path.insert(0, _REPO_DIR)
 
 from src.config import Config
-from src.pipeline import run_batch
+from src.pipeline import run_batch, _derive_row_id, _find_duplicate_emails
 from src.programs import get_program_config
 from src.google_clients import get_sheets_service, read_sheet_rows
 
@@ -51,6 +52,9 @@ with st.sidebar:
     _default_header_row = int(os.environ.get(
         _program_config.header_row_env, str(_program_config.default_header_row),
     ))
+    _default_top_label_row = int(os.environ.get(
+        _program_config.top_label_row_env, str(_program_config.default_top_label_row),
+    ))
 
     sheet_id_input = st.text_input(
         "Sheet ID",
@@ -67,6 +71,14 @@ with st.sidebar:
         "Header row",
         min_value=1, max_value=100, value=_default_header_row, step=1,
     )
+    top_label_row_input = st.number_input(
+        "Top label row",
+        min_value=0, max_value=100, value=_default_top_label_row, step=1,
+        help="Row number of a merged group-header row ABOVE the real "
+        "column headers (e.g. reviewer names spanning several sub-"
+        "columns). Set to 0 if this sheet has no such row — output "
+        "columns are then resolved from the header row itself.",
+    )
 
 st.title(f"{PROGRAM_LABELS[program]} Grading Agent")
 
@@ -76,6 +88,7 @@ try:
         sheet_id_override=sheet_id_input or None,
         sheet_range_override=sheet_range_input or None,
         header_row_override=int(header_row_input),
+        top_label_row_override=int(top_label_row_input),
     )
 except RuntimeError as exc:
     st.error(f"Config error: {exc}")
@@ -113,11 +126,14 @@ with st.sidebar:
             status = entry.get("status")
             if status in status_counts:
                 status_counts[status] += 1
-        skipped_next_run = status_counts["done"] + status_counts["human_review"]
+        # done + human_review are both a completed grade (a score, or a
+        # definitive human-review outcome) — only "failed" is a genuine
+        # error, so that's the only split worth showing here.
+        graded = status_counts["done"] + status_counts["human_review"]
         st.caption(
-            f"{skipped_next_run} row(s) will be skipped next run "
-            f"({status_counts['done']} done, {status_counts['human_review']} human review) · "
-            f"{status_counts['failed']} row(s) failed and will retry next run."
+            f"{graded} row(s) graded (will be skipped next run) · "
+            f"{status_counts['failed']} row(s) failed — genuine errors, "
+            "will retry next run."
         )
     else:
         st.caption("No checkpoint file yet.")
@@ -166,6 +182,9 @@ if run_clicked:
                 st.text(f"{row_id}: {err[:300]}")
 
 st.subheader("Current sheet state")
+if st.button("🔄 Refresh data"):
+    st.rerun()
+
 sheets_service = get_sheets_service(config.service_account_path)
 header, rows = read_sheet_rows(
     sheets_service, config.sheet_id, config.sheet_range, config.header_row
@@ -177,8 +196,21 @@ score_idx = header.index(score_col) if score_col in header else None
 reasoning_idx = header.index(reasoning_col) if reasoning_col in header else None
 name_idx = header.index("Startup name") if "Startup name" in header else None
 
+# A blank-score row with a human_review checkpoint status is still a
+# completed grade — the AI finished its 3 review attempts and correctly
+# escalated (e.g. pitch deck inaccessible), it just has no number. Only a
+# "failed" checkpoint status (a real technical error) counts as a mistake;
+# a row with no checkpoint entry yet just hasn't been attempted.
+duplicate_emails = _find_duplicate_emails(header, rows)
+checkpoint_statuses = {}
+if os.path.isfile(config.checkpoint_path):
+    with open(config.checkpoint_path) as f:
+        checkpoint_statuses = {k: v.get("status") for k, v in json.load(f).items()}
+
 table_rows = []
-for row in rows:
+graded_count = 0
+mistake_count = 0
+for i, row in enumerate(rows):
     name = row[name_idx] if name_idx is not None and len(row) > name_idx else ""
     score = row[score_idx] if score_idx is not None and len(row) > score_idx else ""
     reasoning_raw = (
@@ -187,6 +219,20 @@ for row in rows:
     human_review = ""
     if reasoning_raw.strip().startswith("[NEEDS HUMAN REVIEW]"):
         human_review = "yes"
+
+    if score.strip() != "":
+        graded_count += 1
+    else:
+        sheet_row_number = config.header_row + i + 1
+        row_id = _derive_row_id(header, row, sheet_row_number, duplicate_emails)
+        row_key = hashlib.sha256(row_id.encode("utf-8")).hexdigest()
+        status = checkpoint_statuses.get(row_key)
+        if status == "human_review":
+            graded_count += 1
+        elif status == "failed":
+            mistake_count += 1
+        # else: no checkpoint entry yet — not attempted, not a mistake.
+
     table_rows.append({
         "Startup": name,
         "Score": score,
@@ -194,13 +240,11 @@ for row in rows:
     })
 
 df = pd.DataFrame(table_rows)
-graded_mask = df["Score"].astype(str).str.strip() != ""
 total = len(df)
-graded_count = int(graded_mask.sum())
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Total rows", total)
-col2.metric("Graded", graded_count)
-col3.metric("Ungraded", total - graded_count)
+col2.metric("Graded", graded_count, help="Has a score, or a completed human-review outcome.")
+col3.metric("Mistakes", mistake_count, help="Genuine technical errors — will retry on the next run.")
 
 st.dataframe(df, use_container_width=True, height=500)

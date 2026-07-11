@@ -148,24 +148,31 @@ def resolve_multi_output_columns(
     Same fail-loud philosophy as resolve_output_columns: a missing column
     means the sheet doesn't match what this program expects, and silently
     skipping it would mean scores go nowhere without anyone noticing.
-    """
-    criteria_cols = {}
-    for criterion, column_header in criterion_column_names.items():
-        if column_header not in header:
-            raise RuntimeError(
-                f"Criterion column '{column_header}' (for '{criterion}') not found."
-            )
-        criteria_cols[criterion] = header.index(column_header)
 
-    if total_score_column_name not in header:
-        raise RuntimeError(f"Total score column '{total_score_column_name}' not found.")
-    if notes_column_name not in header:
-        raise RuntimeError(f"Notes column '{notes_column_name}' not found.")
+    Matches on stripped text — confirmed live: a real sheet header had
+    "Total Score " (trailing space) where the configured name was "Total
+    Score", which would otherwise fail loudly on an incidental formatting
+    difference rather than a genuine missing-column problem.
+    """
+    stripped_index = {}
+    for i, col in enumerate(header):
+        stripped_index.setdefault(col.strip(), i)
+
+    def _find(name: str, description: str) -> int:
+        idx = stripped_index.get(name.strip())
+        if idx is None:
+            raise RuntimeError(f"{description} column '{name}' not found.")
+        return idx
+
+    criteria_cols = {
+        criterion: _find(column_header, f"Criterion (for '{criterion}')")
+        for criterion, column_header in criterion_column_names.items()
+    }
 
     return {
         "criteria": criteria_cols,
-        "total_score": header.index(total_score_column_name),
-        "notes": header.index(notes_column_name),
+        "total_score": _find(total_score_column_name, "Total score"),
+        "notes": _find(notes_column_name, "Notes"),
     }
 
 

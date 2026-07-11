@@ -44,13 +44,15 @@ class Config:
         sheet_id_override: str | None = None,
         sheet_range_override: str | None = None,
         header_row_override: int | None = None,
+        top_label_row_override: int | None = None,
     ) -> "Config":
         """Build Config from env vars, with optional per-call overrides for
-        sheet_id/sheet_range/header_row — used by app.py's sheet picker so a
-        user can point a run at a different sheet/tab/header row (e.g. R2B's
-        multiple competition rounds, each its own sheet) without editing
-        .env. Omitted overrides fall back to the existing env-var behavior
-        unchanged.
+        sheet_id/sheet_range/header_row/top_label_row — used by app.py's
+        sheet picker so a user can point a run at a different sheet/tab/
+        header row (e.g. R2B's multiple competition rounds, each its own
+        sheet, sometimes with no merged top-label row at all) without
+        editing .env. Omitted overrides fall back to the existing env-var
+        behavior unchanged.
         """
         program_config = get_program_config(program)
         sheet_id = sheet_id_override or os.environ.get(program_config.sheet_id_env, "")
@@ -128,9 +130,13 @@ class Config:
             sheet_id=sheet_id,
             sheet_range=sheet_range,
             header_row=header_row,
-            top_label_row=int(os.environ.get(
-                program_config.top_label_row_env, str(program_config.default_top_label_row),
-            )),
+            top_label_row=(
+                top_label_row_override
+                if top_label_row_override is not None
+                else int(os.environ.get(
+                    program_config.top_label_row_env, str(program_config.default_top_label_row),
+                ))
+            ),
             service_account_path=sa_path,
             analyzer_model=analyzer_model,
             grader_model=grader_model,
