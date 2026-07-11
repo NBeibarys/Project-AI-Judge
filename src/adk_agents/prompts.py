@@ -51,7 +51,7 @@ PRESENTATION & CLARITY
 - 7-10: Clear, confident, and persuasive presentation with strong storytelling, a logical flow, and a compelling value proposition communicated effectively.
 
 SCORING INSTRUCTIONS:
-- VIDEO IS THE PRIMARY SOURCE FOR ALL CRITERIA. All evidence should come from the pitch video.
+- THE VIDEO IS THE ONLY SOURCE FOR ALL CRITERIA. All evidence must come from the pitch video — there is no pitch deck or application text this round.
 - For each criterion, first pick a BAND (1-3, 4-6, 7-10), then pick the exact integer within that band.
 - Write your rationale BEFORE the score. Rationale must explain what evidence was found (or missing).
 - Each level up requires MORE EVIDENCE, not just "better quality." The question is always: "What additional proof has been provided?"
