@@ -510,6 +510,22 @@ def process_row(
         except (json.JSONDecodeError, TypeError):
             criterion_scores = {}
             criterion_rationale = {}
+            if score == 0:
+                # Grader-side disqualification (agent.py's R2BApprovalGate,
+                # triggered by disqualifying_issue_found on the grader's
+                # verdict) sets reasoning to plain text — "Application
+                # scored 0: confirmed contradiction — ..." — unlike
+                # Head-side disqualification, which produces the JSON blob
+                # parsed above. Confirmed via code trace: both are a real,
+                # deliberate 0, not "couldn't produce a score", so both
+                # must land on the sheet the same way regardless of which
+                # stage caught it, or Total Score silently shows blank
+                # instead of 0 for the more likely of the two paths (the
+                # grader runs first and can exit as early as attempt 1).
+                criterion_scores = {c: 0 for c in config.program_config.rubric_criteria}
+                criterion_rationale = {
+                    c: reasoning for c in config.program_config.rubric_criteria
+                }
 
         if criterion_scores:
             total_score = round(sum(criterion_scores.values()) / len(criterion_scores), 2)
