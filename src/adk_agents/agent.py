@@ -37,8 +37,10 @@ from .schemas import (
     FellowshipV2AnalystReport,
     FellowshipV2HeadScore,
     FellowshipV2WebVerificationReport,
+    R2BAnalystReport,
     R2BGraderVerdict,
     R2BHeadScore,
+    R2BHeadScoreNamed,
 )
 
 # Grader/Head/Analyst temperature: the LLM-as-judge literature
@@ -315,6 +317,8 @@ def build_root_agent(
         analyst_schema = FellowshipV2AnalystReport
     elif program_config.program == "alchemist":
         analyst_schema = AlchemistAnalystReport
+    elif program_config.program == "r2b":
+        analyst_schema = R2BAnalystReport
     else:
         analyst_schema = AnalystReport
 
@@ -424,6 +428,8 @@ def build_head_agent(
         head_schema = FellowshipV2HeadScore
     elif program_config.program == "alchemist":
         head_schema = AlchemistHeadScore
+    elif program_config.program == "r2b":
+        head_schema = R2BHeadScoreNamed
     else:
         head_schema = R2BHeadScore
 

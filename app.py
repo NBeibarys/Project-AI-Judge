@@ -156,6 +156,13 @@ with st.sidebar:
 if run_clicked:
     progress_bar = st.progress(0.0)
     status_text = st.empty()
+    # The progress bar/text below only update once a ROW FINISHES (via
+    # on_progress, called from run_batch's per-future completion handler)
+    # — for a single row that can take 1-3+ minutes (video download,
+    # verify loop, multi-sample Head scoring), that's several minutes of
+    # a blank progress area with zero feedback that anything is happening
+    # at all, easily read as "stuck". Show something immediately instead.
+    status_text.text("Starting — resolving sheet rows and launching grading…")
     ok_count = 0
     fail_count = 0
 

@@ -49,10 +49,18 @@ class Checkpoint:
             }
             self._flush()
 
-    def mark_failed(self, row_id: str, error: str):
+    def mark_failed(self, row_id: str, error: str) -> int:
         # Failed rows are NOT treated as done — rerunning the batch
         # should retry them, since the failure is usually transient
         # (download timeout, API rate limit) rather than a content issue.
+        # attempts accumulates across calls (unlike status/error, which are
+        # just the latest) so a caller can tell a genuinely transient blip
+        # apart from a row that fails the same way every single run (e.g.
+        # a structurally broken source URL, or a file too large to ever
+        # process within quota) and escalate instead of retrying forever.
         with self._lock:
-            self._data[self._key(row_id)] = {"status": "failed", "error": error}
+            key = self._key(row_id)
+            attempts = self._data.get(key, {}).get("attempts", 0) + 1
+            self._data[key] = {"status": "failed", "error": error, "attempts": attempts}
             self._flush()
+            return attempts

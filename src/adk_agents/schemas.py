@@ -198,6 +198,31 @@ class AnalystReport(BaseModel):
         return self
 
 
+class R2BAnalystReport(BaseModel):
+    """Explicit analyst schema for the R2B rubric with concrete field names."""
+    Problem_Solution: CriterionEvidence
+    Market_Potential: CriterionEvidence
+    Product_MVP_Innovation: CriterionEvidence
+    Team_Strength: CriterionEvidence
+    Business_Model: CriterionEvidence
+    Presentation_Clarity: CriterionEvidence
+    missing_sources: list[str] = Field(default_factory=list)
+
+    def to_analyst_report(self) -> "AnalystReport":
+        """Convert to the generic AnalystReport format for downstream agents."""
+        return AnalystReport(
+            criteria={
+                "Problem & Solution": self.Problem_Solution,
+                "Market Potential": self.Market_Potential,
+                "Product/MVP & Innovation": self.Product_MVP_Innovation,
+                "Team Strength": self.Team_Strength,
+                "Business Model": self.Business_Model,
+                "Presentation & Clarity": self.Presentation_Clarity,
+            },
+            missing_sources=self.missing_sources,
+        )
+
+
 # ---------------------------------------------------------------------------
 # R2B contracts: verify and score split across two agents.
 # ---------------------------------------------------------------------------
@@ -478,3 +503,60 @@ class R2BHeadScore(BaseModel):
         if self.override != 0.0 and not self.override_reasoning.strip():
             raise ValueError("non-zero override requires override_reasoning")
         return self
+
+
+class R2BHeadScoreNamed(BaseModel):
+    """Explicit head-scoring schema for the R2B rubric with concrete field names."""
+    Problem_Solution: int = Field(ge=1, le=10)
+    Market_Potential: int = Field(ge=1, le=10)
+    Product_MVP_Innovation: int = Field(ge=1, le=10)
+    Team_Strength: int = Field(ge=1, le=10)
+    Business_Model: int = Field(ge=1, le=10)
+    Presentation_Clarity: int = Field(ge=1, le=10)
+    Problem_Solution_rationale: str = Field(min_length=1)
+    Market_Potential_rationale: str = Field(min_length=1)
+    Product_MVP_Innovation_rationale: str = Field(min_length=1)
+    Team_Strength_rationale: str = Field(min_length=1)
+    Business_Model_rationale: str = Field(min_length=1)
+    Presentation_Clarity_rationale: str = Field(min_length=1)
+    final_score: float = Field(ge=1, le=10)
+    override: float = Field(default=0.0, ge=-1.0, le=1.0)
+    override_reasoning: str = ""
+    confidence: Literal["low", "medium", "high"]
+    contradiction_found: bool = False
+    contradiction_reason: str = ""
+    disqualifying_issue_found: bool = False
+    disqualifying_issue_type: Literal[
+        "none", "contradiction", "fraud", "suspicious_application"
+    ] = "none"
+    disqualifying_issue_reason: str = ""
+
+    def to_head_score(self) -> "R2BHeadScore":
+        """Convert to the generic R2BHeadScore format for downstream agents."""
+        return R2BHeadScore(
+            criterion_scores={
+                "Problem & Solution": self.Problem_Solution,
+                "Market Potential": self.Market_Potential,
+                "Product/MVP & Innovation": self.Product_MVP_Innovation,
+                "Team Strength": self.Team_Strength,
+                "Business Model": self.Business_Model,
+                "Presentation & Clarity": self.Presentation_Clarity,
+            },
+            criterion_rationale={
+                "Problem & Solution": self.Problem_Solution_rationale,
+                "Market Potential": self.Market_Potential_rationale,
+                "Product/MVP & Innovation": self.Product_MVP_Innovation_rationale,
+                "Team Strength": self.Team_Strength_rationale,
+                "Business Model": self.Business_Model_rationale,
+                "Presentation & Clarity": self.Presentation_Clarity_rationale,
+            },
+            final_score=self.final_score,
+            override=self.override,
+            override_reasoning=self.override_reasoning,
+            confidence=self.confidence,
+            contradiction_found=self.contradiction_found,
+            contradiction_reason=self.contradiction_reason,
+            disqualifying_issue_found=self.disqualifying_issue_found,
+            disqualifying_issue_type=self.disqualifying_issue_type,
+            disqualifying_issue_reason=self.disqualifying_issue_reason,
+        )

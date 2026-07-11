@@ -38,7 +38,7 @@ import re
 import time
 from typing import Optional
 
-from .google_clients import extract_drive_file_id
+from .google_clients import extract_drive_file_id, is_drive_folder_url
 from .video_urls import (
     ResolvedVideo,
     VideoResolutionError,
@@ -56,6 +56,16 @@ VERTEX_INLINE_PDF_MAX_BYTES = 45 * 1024 * 1024
 # Vertex AI inline Part.from_bytes video limit — same kind of fixed
 # platform limit, general ~100MB inline cap. Kept with a safety margin.
 VERTEX_INLINE_VIDEO_MAX_BYTES = 95 * 1024 * 1024
+# Separate, much stricter limit: when a video is attached as a URI
+# reference (Part.from_uri, e.g. a direct HTTPS link Tier-1 resolved
+# without downloading it), Vertex fetches that URL server-side itself —
+# confirmed live to hard-cap at exactly 15728640 bytes (15MB): "400
+# INVALID_ARGUMENT ... File content exceeded the size limit.
+# max_bytes_fetched: 15728640". This is unrelated to
+# VERTEX_INLINE_VIDEO_MAX_BYTES above, which only gates OUR OWN
+# inline-embedding decision after bytes are already downloaded. A safety
+# margin below the exact server limit avoids boundary flakiness.
+VERTEX_URI_FETCH_MAX_BYTES = 14 * 1024 * 1024
 # 5-minute ceiling for the PROCESSING → ACTIVE polling loop.
 FILES_API_POLL_TIMEOUT_SECONDS = 300
 FILES_API_POLL_INTERVAL_SECONDS = 3
@@ -157,7 +167,14 @@ def _shrink_video_to_fit(data: bytes, max_bytes: int) -> bytes:
     probe = subprocess.run(
         [
             "ffprobe", "-v", "error",
-            "-print_format", "json", "-show_format",
+            "-print_format", "json", "-show_format", "-show_streams",
+            # A fragmented MP4 (empty_moov — this function's own output,
+            # when called a second time on an already-shrunk video) has no
+            # duration in its top-level format box; ffprobe needs to scan
+            # further into the stream to compute it. Without these, the
+            # format-level probe below silently returns no "duration" key
+            # at all rather than erroring, which reads as "unprobable".
+            "-analyzeduration", "100M", "-probesize", "100M",
             "-i", "pipe:0",
         ],
         input=data,
@@ -170,7 +187,21 @@ def _shrink_video_to_fit(data: bytes, max_bytes: int) -> bytes:
             + probe.stderr[-300:].decode("utf-8", errors="replace")
         )
     try:
-        duration = float(json.loads(probe.stdout)["format"]["duration"])
+        probe_json = json.loads(probe.stdout)
+        duration_str = probe_json.get("format", {}).get("duration")
+        if duration_str is None:
+            # Fall back to the longest stream's own duration — format-level
+            # duration can be absent (fragmented containers) even though
+            # per-stream duration is present.
+            stream_durations = [
+                float(s["duration"]) for s in probe_json.get("streams", [])
+                if s.get("duration") is not None
+            ]
+            if not stream_durations:
+                raise KeyError("duration")
+            duration = max(stream_durations)
+        else:
+            duration = float(duration_str)
     except Exception as exc:
         raise VideoResolutionError(
             f"Could not determine video duration: {type(exc).__name__}"
@@ -232,7 +263,16 @@ def _drive_video_mime_type(service, file_id: str) -> str:
 
 
 def _download_https(url: str) -> bytes:
-    """Download a direct HTTPS URL into memory, with a size guard."""
+    """Download a direct HTTPS URL into memory, with a size guard.
+
+    timeout=20 (not the 300s this used to be): a legitimate PDF/Slides
+    export or direct video responds in seconds. Cloudflare-protected pages
+    (Canva, etc.) often don't reject a suspected bot with a clean error —
+    they silently stall the connection instead, which is worse than a fast
+    failure (confirmed live: one such row was still hanging past 4m50s).
+    A short timeout turns that into a fast, honest VideoResolutionError
+    instead of tying up a worker thread for most of 5 minutes per attempt.
+    """
     # Reuse video_urls' SSRF-safe redirect handler for consistency.
     from urllib.request import build_opener, Request
     from .video_urls import _SafeRedirectHandler
@@ -242,7 +282,7 @@ def _download_https(url: str) -> bytes:
     req = Request(url, headers=headers, method="GET")
     chunks = []
     written = 0
-    with opener.open(req, timeout=300) as response:
+    with opener.open(req, timeout=20) as response:
         while True:
             chunk = response.read(DOWNLOAD_CHUNK_BYTES)
             if not chunk:
@@ -304,6 +344,57 @@ def _upload_or_wrap(
     raise VideoResolutionError("Gemini Files API upload timed out (5 min).")
 
 
+def _https_content_length(url: str) -> Optional[int]:
+    """HEAD request for Content-Length. Returns None if unavailable —
+    callers should treat unknown size as "assume it needs downloading"
+    rather than risk sending an oversized URI reference to Vertex."""
+    from urllib.request import build_opener, Request
+    from .video_urls import _SafeRedirectHandler
+
+    opener = build_opener(_SafeRedirectHandler())
+    headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
+    req = Request(url, headers=headers, method="HEAD")
+    try:
+        with opener.open(req, timeout=15) as response:
+            length = response.headers.get("Content-Length")
+            return int(length) if length is not None else None
+    except Exception:
+        return None
+
+
+def _finalize_downloaded_video(data: bytes, mime_type: str, source: str) -> ResolvedVideo:
+    """Shared post-download processing: transcode/shrink for Vertex's inline
+    limits, then upload-or-wrap. Used by both the Drive-download and the
+    oversized-direct-URL paths below, which otherwise duplicated this."""
+    original_size_bytes = len(data)
+    if (
+        mime_type != "video/mp4"
+        and os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true"
+    ):
+        # On Vertex, video goes inline (Part.from_bytes) — no Files API to
+        # properly ingest arbitrary containers there. Only video/mp4 is
+        # confirmed to work inline; a real .webm sent inline labeled
+        # correctly still 400s (confirmed live). Transcode to MP4 in memory
+        # via ffmpeg rather than losing the video as evidence entirely.
+        data = _transcode_to_mp4(data)
+        mime_type = "video/mp4"
+    if (
+        len(data) > VERTEX_INLINE_VIDEO_MAX_BYTES
+        and os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true"
+    ):
+        # A correctly-formatted mp4 can still be too big for Vertex's inline
+        # limit — same failure mode as the oversized PDF (crashes the whole
+        # row, deck+text included). Shrink rather than drop it, same
+        # reasoning as the PDF case: don't let one oversized file take the
+        # whole row down.
+        data = _shrink_video_to_fit(data, VERTEX_INLINE_VIDEO_MAX_BYTES)
+    uri, inline_data = _upload_or_wrap(data, mime_type=mime_type)
+    return ResolvedVideo(
+        uri=uri or "", mime_type=mime_type, source=source, data=inline_data,
+        original_size_bytes=original_size_bytes,
+    )
+
+
 def ingest_video_for_r2b(
     submitted_url: str,
     service_account_path: str,
@@ -321,19 +412,40 @@ def ingest_video_for_r2b(
     resolved: Optional[ResolvedVideo] = None
     try:
         resolved = resolve_video_url(submitted_url)
-        # If Tier-1 resolved to a YouTube URL, use it directly.
-        # If it resolved to a Drive/download URL, we need to download and
-        # upload to the Files API (the model cannot fetch these URLs
-        # directly: Drive serves an HTML interstitial or requires auth).
-        if not resolved.requires_url_context and "youtube" not in resolved.uri and "youtu.be" not in resolved.uri:
-            # Non-YouTube URL that Tier-1 thinks is directly fetchable.
-            # These often fail in practice (robots.txt, Drive auth).
-            # Force download + Files API upload for reliability.
-            pass
-        elif not resolved.requires_url_context:
-            return resolved
     except VideoResolutionError:
         resolved = None
+
+    if resolved is not None and not resolved.requires_url_context:
+        is_youtube = "youtube" in resolved.uri or "youtu.be" in resolved.uri
+        if is_youtube:
+            return resolved
+        # Non-YouTube URL that Tier-1 resolved directly (not via Drive) —
+        # e.g. a video hosted on a CDN. A small file can just be handed to
+        # Gemini as a URI reference (Part.from_uri); Gemini fetches it
+        # itself. But that server-side fetch has its own hard cap —
+        # confirmed live: "400 INVALID_ARGUMENT ... File content exceeded
+        # the size limit. max_bytes_fetched: 15728640" (exactly 15MB) — a
+        # completely separate, much stricter limit than
+        # VERTEX_INLINE_VIDEO_MAX_BYTES (95MB), which only applies once we
+        # download bytes ourselves. So: stay on the cheap direct-URI path
+        # when the file is small enough to survive that fetch; only pay for
+        # a full download+inline-embed when it's actually over the limit
+        # (or size can't be determined at all, which is the safer default).
+        content_length = _https_content_length(submitted_url)
+        if content_length is not None and content_length <= VERTEX_URI_FETCH_MAX_BYTES:
+            return resolved
+        try:
+            data = _download_https(submitted_url)
+            if len(data) > FILES_API_MAX_BYTES:
+                raise VideoResolutionError("Video exceeds the 2GB size limit.")
+            mime_type = resolved.mime_type or "video/mp4"
+            return _finalize_downloaded_video(data, mime_type, source="direct_download")
+        except VideoResolutionError:
+            raise
+        except Exception as exc:
+            raise VideoResolutionError(
+                f"Direct video download failed: {type(exc).__name__}: {exc}"
+            ) from exc
 
     # Tier 2: Google Drive link → download via Drive API.
     drive_id = extract_drive_file_id(submitted_url)
@@ -346,35 +458,7 @@ def ingest_video_for_r2b(
                 raise VideoResolutionError(
                     "Drive video exceeds the 2GB size limit."
                 )
-            if (
-                mime_type != "video/mp4"
-                and os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true"
-            ):
-                # On Vertex, video goes inline (Part.from_bytes) — no Files
-                # API to properly ingest arbitrary containers there. Only
-                # video/mp4 is confirmed to work inline; a real .webm sent
-                # inline labeled correctly still 400s (confirmed live).
-                # Transcode to MP4 in memory via ffmpeg rather than losing
-                # the video as evidence entirely.
-                data = _transcode_to_mp4(data)
-                mime_type = "video/mp4"
-            if (
-                len(data) > VERTEX_INLINE_VIDEO_MAX_BYTES
-                and os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true"
-            ):
-                # A correctly-formatted mp4 can still be too big for
-                # Vertex's inline limit — same failure mode as the oversized
-                # PDF (crashes the whole row, deck+text included). Shrink
-                # rather than drop it, same reasoning as the PDF case: don't
-                # let one oversized file take the whole row down.
-                data = _shrink_video_to_fit(data, VERTEX_INLINE_VIDEO_MAX_BYTES)
-            uri, inline_data = _upload_or_wrap(data, mime_type=mime_type)
-            return ResolvedVideo(
-                uri=uri or "",
-                mime_type=mime_type,
-                source="drive_upload",
-                data=inline_data,
-            )
+            return _finalize_downloaded_video(data, mime_type, source="drive_upload")
         except VideoResolutionError:
             raise
         except Exception as exc:
@@ -614,6 +698,15 @@ def ingest_pitch_deck(
             if drive_id:
                 service = _drive_service(service_account_path)
                 data = _download_drive_file(service, drive_id)
+            elif is_drive_folder_url(submitted_url):
+                # A folder link, not a file — downloading it as if it were
+                # a PDF would just fetch a folder-listing page and fail
+                # slowly/unpredictably further down. Fail immediately with
+                # an honest, specific message instead.
+                raise VideoResolutionError(
+                    "Pitch deck link is a Google Drive folder, not a file — "
+                    "share a direct file link instead."
+                )
             else:
                 # Direct HTTPS link to a PDF.
                 data = _download_https(submitted_url)

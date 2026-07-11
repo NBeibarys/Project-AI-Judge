@@ -70,6 +70,16 @@ class ResolvedVideo:
     source: str
     requires_url_context: bool = False
     data: bytes | None = None
+    # Size in bytes BEFORE any compression/transcoding — None when not
+    # downloaded ourselves (Tier-1 URI references) or not tracked. Lets
+    # callers recognize "this required heavy compression to fit Vertex's
+    # inline limit" (video_ingestion.VERTEX_INLINE_VIDEO_MAX_BYTES) as a
+    # signal that a quota/resource-exhausted error on this row is likely to
+    # recur on retry rather than being genuinely transient — confirmed live:
+    # a 398MB video compressed down to the inline limit still exhausted the
+    # trial-tier quota when actually sent, in complete isolation from any
+    # concurrency contention.
+    original_size_bytes: int | None = None
     # Plain-text readout of any image-only deck slides (charts, financial
     # tables, screenshots — no selectable text). Populated only by
     # video_ingestion.py's ingest_pitch_deck, via one bundled Gemini call

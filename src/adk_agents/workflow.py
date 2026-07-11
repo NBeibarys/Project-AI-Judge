@@ -290,13 +290,15 @@ class AdkReviewWorkflow:
             raise RuntimeError("Head agent produced no output.")
         result = _as_dict(head_output)
 
-        # Convert flat schema (Fellowship V2, Alchemist) to the
-        # criterion_scores / criterion_rationale dict format that
+        # Convert flat/named schema outputs (Fellowship V2, Alchemist, R2B)
+        # to the criterion_scores / criterion_rationale dict format that
         # _average_head_samples expects.
         if self.program_config.program == "fellowship_v2" and "criterion_scores" not in result:
             result = self._convert_fellowship_v2_head(result)
         elif self.program_config.program == "alchemist" and "criterion_scores" not in result:
             result = self._convert_alchemist_head(result)
+        elif self.program_config.program == "r2b" and "criterion_scores" not in result:
+            result = self._convert_r2b_head(result)
 
         return result
 
@@ -334,6 +336,35 @@ class AdkReviewWorkflow:
             "Market_Potential": "Market Potential",
             "Scalability_US_Market": "Scalability & Readiness for the U.S. Market",
             "Team_Strength": "Team Strength",
+        }
+        criterion_scores = {}
+        criterion_rationale = {}
+        for field_name, criterion_name in criteria_map.items():
+            criterion_scores[criterion_name] = flat.get(field_name, 5)
+            criterion_rationale[criterion_name] = flat.get(f"{field_name}_rationale", "")
+        return {
+            "criterion_scores": criterion_scores,
+            "criterion_rationale": criterion_rationale,
+            "final_score": flat.get("final_score", 5.0),
+            "override": flat.get("override", 0.0),
+            "override_reasoning": flat.get("override_reasoning", ""),
+            "confidence": flat.get("confidence", "medium"),
+            "contradiction_found": flat.get("contradiction_found", False),
+            "contradiction_reason": flat.get("contradiction_reason", ""),
+            "disqualifying_issue_found": flat.get("disqualifying_issue_found", False),
+            "disqualifying_issue_type": flat.get("disqualifying_issue_type", "none"),
+            "disqualifying_issue_reason": flat.get("disqualifying_issue_reason", ""),
+        }
+
+    def _convert_r2b_head(self, flat: dict) -> dict:
+        """Convert R2BHeadScoreNamed flat fields to dict format."""
+        criteria_map = {
+            "Problem_Solution": "Problem & Solution",
+            "Market_Potential": "Market Potential",
+            "Product_MVP_Innovation": "Product/MVP & Innovation",
+            "Team_Strength": "Team Strength",
+            "Business_Model": "Business Model",
+            "Presentation_Clarity": "Presentation & Clarity",
         }
         criterion_scores = {}
         criterion_rationale = {}
