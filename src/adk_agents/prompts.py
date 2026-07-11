@@ -341,7 +341,7 @@ Analyst report (approved evidence):
 
 
 # ---------------------------------------------------------------------------
-# R2B instructions (video-primary; text is supplementary)
+# R2B instructions (video-only; no deck or application text this round)
 # ---------------------------------------------------------------------------
 
 R2B_ANALYST_INSTRUCTION = f"""

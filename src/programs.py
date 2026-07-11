@@ -157,7 +157,7 @@ FELLOWSHIP_V2_CONFIG = ProgramConfig(
 )
 
 
-# --- R2B (6 criteria, 3-band, video-primary, 3 distinct roles) --------------
+# --- R2B (6 criteria, 3-band, video-only, 3 distinct roles) ----------------
 
 R2B_CONFIG = ProgramConfig(
     program="r2b",
@@ -190,7 +190,20 @@ R2B_CONFIG = ProgramConfig(
     total_score_column_name="Total Score",
     notes_column_name="Comments / Notes",
     excluded_header_substrings=(),
-    excluded_header_names=frozenset({"", "AI", "AI_Reasoning"}),
+    # This round's own output columns must be excluded from what the AI
+    # sees as application text, same as every other program already
+    # excludes its output columns (AI/AI_Reasoning/Total/Score) — without
+    # this, a re-run (retry after failure, force re-grade) would feed the
+    # AI's own prior scores/notes back to it as if they were part of the
+    # applicant's submission, directly undermining the "video is the ONLY
+    # source" instructions this round's prompts rely on.
+    excluded_header_names=frozenset({
+        "", "AI", "AI_Reasoning",
+        "Problem & Solution (10 pts max)", "Market Potential (10 pts max)",
+        "Product/MVP & Innovation (10 pts max)", "Team Strength (10 pts max)",
+        "Business Model (10 pts max)", "Presentation & Clarity (10 pts)",
+        "Total Score", "Comments / Notes",
+    }),
 )
 
 
