@@ -108,7 +108,13 @@ def _download_drive_file(service, file_id: str) -> bytes:
     return buf.getvalue()
 
 
-TRANSCODE_TIMEOUT_SECONDS = 180
+# 180s was enough for typical short pitch videos but not for shrinking a
+# large upload: a real 233MB, long-duration Drive video hit the 180s wall
+# mid-encode (confirmed live — the whole point of shrinking is that the
+# source is big, so the timeout must budget for the big case, not the
+# typical one). 600s plus the veryfast preset below keeps the worst case
+# bounded without failing legitimate large submissions.
+TRANSCODE_TIMEOUT_SECONDS = 600
 
 
 def _transcode_to_mp4(data: bytes) -> bytes:
@@ -215,23 +221,46 @@ def _shrink_video_to_fit(data: bytes, max_bytes: int) -> bytes:
         VIDEO_SHRINK_MIN_VIDEO_BITRATE_BPS,
     )
 
-    proc = subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-i", "pipe:0",
-            "-c:v", "libx264",
-            "-b:v", str(video_bps),
-            "-maxrate", str(int(video_bps * 1.5)),
-            "-bufsize", str(int(video_bps * 2)),
-            "-c:a", "aac", "-b:a", str(VIDEO_SHRINK_AUDIO_BITRATE_BPS),
-            "-movflags", "frag_keyframe+empty_moov",
-            "-f", "mp4",
-            "pipe:1",
-        ],
-        input=data,
-        capture_output=True,
-        timeout=TRANSCODE_TIMEOUT_SECONDS,
-    )
+    # The encode reads from a temp FILE, not stdin — an MP4 with its moov
+    # atom at the END (how phones/screen recorders typically write them)
+    # cannot be demuxed from a non-seekable pipe: ffmpeg reaches EOF still
+    # looking for the index and dies with "Invalid data found when
+    # processing input" (confirmed live on a real 233MB Drive upload —
+    # the grader then reported the video as "inaccessible and corrupted").
+    # ffprobe above survives pipe input only because of its large
+    # -analyzeduration/-probesize scan buffers; the encoder gets no such
+    # luxury. Output stays a pipe — frag_keyframe+empty_moov exists
+    # precisely to make the OUTPUT writable without seeking.
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as src_file:
+        src_file.write(data)
+        src_path = src_file.name
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-i", src_path,
+                "-c:v", "libx264",
+                # veryfast: ~3-5x faster than the default medium preset.
+                # At the low bitrates this budget-driven shrink targets,
+                # preset quality differences are marginal — the bitrate cap
+                # dominates quality — but encode TIME is what times out on
+                # large sources.
+                "-preset", "veryfast",
+                "-b:v", str(video_bps),
+                "-maxrate", str(int(video_bps * 1.5)),
+                "-bufsize", str(int(video_bps * 2)),
+                "-c:a", "aac", "-b:a", str(VIDEO_SHRINK_AUDIO_BITRATE_BPS),
+                "-movflags", "frag_keyframe+empty_moov",
+                "-f", "mp4",
+                "pipe:1",
+            ],
+            capture_output=True,
+            timeout=TRANSCODE_TIMEOUT_SECONDS,
+        )
+    finally:
+        os.unlink(src_path)
     if proc.returncode != 0 or not proc.stdout:
         raise VideoResolutionError(
             "Video compress failed: "

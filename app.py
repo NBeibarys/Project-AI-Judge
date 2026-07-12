@@ -165,16 +165,25 @@ if run_clicked:
     status_text.text("Starting — resolving sheet rows and launching grading…")
     ok_count = 0
     fail_count = 0
+    skip_count = 0
 
     def _on_progress(done, total, row_id, ok):
-        global ok_count, fail_count
-        if ok:
+        global ok_count, fail_count, skip_count
+        # ok=None means deliberately skipped (no-show, or already graded) —
+        # neither a grade nor a failure. Without the separate bucket, a
+        # batch with 11 no-shows displayed "13 failed" when only 2 rows
+        # genuinely failed (confirmed live).
+        if ok is None:
+            skip_count += 1
+        elif ok:
             ok_count += 1
         else:
             fail_count += 1
         progress_bar.progress(done / total if total else 1.0)
         status_text.text(
-            f"{done}/{total} processed — {ok_count} graded, {fail_count} failed"
+            f"{done}/{total} processed — {ok_count} graded, "
+            f"{skip_count} skipped (no-show / already graded), "
+            f"{fail_count} failed"
         )
 
     result = run_batch(

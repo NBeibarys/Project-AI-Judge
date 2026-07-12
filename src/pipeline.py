@@ -739,9 +739,16 @@ def run_batch(
         for future in as_completed(futures):
             row_id, sheet_row_number = futures[future]
             ok = False
+            skipped = False
             try:
                 _, result = future.result()
                 if result is None:
+                    # Deliberate skip (no-show, or already graded in a
+                    # prior run) — not a failure. Reported to on_progress
+                    # as ok=None so the UI doesn't count it as one:
+                    # confirmed live, a batch with 11 no-shows displayed
+                    # "13 failed" when only 2 rows genuinely failed.
+                    skipped = True
                     continue
                 if config.program_config.criterion_column_names:
                     write_multi_row_result(
@@ -793,6 +800,9 @@ def run_batch(
             finally:
                 done_count += 1
                 if on_progress is not None:
-                    on_progress(done_count, submitted, row_id, ok)
+                    on_progress(
+                        done_count, submitted, row_id,
+                        None if skipped else ok,
+                    )
 
     return {"graded": results, "errors": errors}
