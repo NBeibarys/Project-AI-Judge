@@ -403,6 +403,10 @@ BEFORE you call anything a contradiction, actively ask: is there ANY
 plausible, reasonable explanation that lets both statements be true at
 once? Common innocent explanations that are NOT contradictions:
 - Rounding or approximation: "$10" vs "$9.90" is the same price, not a lie.
+- A "+" suffix means AT LEAST that many: "250+ customers" on a slide and
+  "more than 300 customers" spoken are consistent (slides are also often
+  made earlier than the pitch, so the spoken number being higher is
+  expected growth, not a contradiction).
 - Different currencies: slides are often in local currency while the
   founder speaks in dollars — "308M AZN" and "$180M" are the same market
   size at the exchange rate. Convert before comparing.
@@ -414,7 +418,10 @@ once? Common innocent explanations that are NOT contradictions:
   revenue).
 - Different time periods or snapshots, a projection vs an actual, or a
   current market vs an expansion target ("we operate in CIS" and "we are
-  targeting the US" can both be true).
+  targeting the US" can both be true). A roadmap slide (e.g. "First 30
+  days") lists PLANNED targets, not achieved traction — it cannot
+  contradict a statement about today's status like "we are developing our
+  MVP".
 If ANY such explanation fits, it is NOT a contradiction — treat it as
 ordinary evidence and do not flag it.
 
@@ -485,14 +492,17 @@ claim — not for a claim that's merely thin, ambitious, or unverifiable.
 
 BEFORE you call anything a contradiction, actively ask: is there ANY
 plausible, reasonable explanation that lets both statements be true at once?
-Rounding ("$10" vs "$9.90"), different currencies (a slide in local currency
-vs the founder speaking in dollars — convert at the exchange rate before
-comparing), different metrics that merely sound similar (MRR is RECURRING
-revenue, a subset of total/average sales — a smaller MRR alongside larger
-total sales is consistent, not contradictory; same for any subset vs total),
-different time periods, a projection vs an actual, or a current market vs an
-expansion target. If ANY such explanation fits, it is NOT a contradiction —
-do not flag it.
+Rounding ("$10" vs "$9.90"), a "+" suffix meaning AT LEAST that many ("250+
+customers" and "more than 300 customers" are consistent), different
+currencies (a slide in local currency vs the founder speaking in dollars —
+convert at the exchange rate before comparing), different metrics that
+merely sound similar (MRR is RECURRING revenue, a subset of total/average
+sales — a smaller MRR alongside larger total sales is consistent, not
+contradictory; same for any subset vs total), different time periods, a
+projection vs an actual (a roadmap slide like "First 30 days" lists PLANNED
+targets, not achieved traction — it cannot contradict a statement about
+today's status), or a current market vs an expansion target. If ANY such
+explanation fits, it is NOT a contradiction — do not flag it.
 
 If found, score all 6 criteria as 0, quote exactly what the report says and
 where the inconsistency is, and state explicitly WHY no reasonable
