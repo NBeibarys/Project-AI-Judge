@@ -206,11 +206,26 @@ header, rows = read_sheet_rows(
     sheets_service, config.sheet_id, config.sheet_range, config.header_row
 )
 
-score_col = config.program_config.score_column_name
-reasoning_col = config.program_config.reasoning_column_name
-score_idx = header.index(score_col) if score_col in header else None
-reasoning_idx = header.index(reasoning_col) if reasoning_col in header else None
-name_idx = header.index("Startup name") if "Startup name" in header else None
+# Whitespace/case-tolerant column lookup: the real R2B sheet has headers
+# like "Startup Name" (capital N) and "Total Score " (trailing space) —
+# exact header.index() matching silently found NOTHING for R2B (score
+# column "AI" doesn't exist in multi-column mode at all), so this whole
+# section showed Graded=0 and an empty table on a fully graded sheet.
+_col_lookup = {}
+for _i, _col in enumerate(header):
+    _col_lookup.setdefault(_col.strip().lower(), _i)
+
+if config.program_config.criterion_column_names:
+    # Multi-column program (R2B): "graded" means the Total Score column
+    # is filled; the human-review marker lives in Comments/Notes.
+    score_col = config.program_config.total_score_column_name
+    reasoning_col = config.program_config.notes_column_name
+else:
+    score_col = config.program_config.score_column_name
+    reasoning_col = config.program_config.reasoning_column_name
+score_idx = _col_lookup.get(score_col.strip().lower())
+reasoning_idx = _col_lookup.get(reasoning_col.strip().lower())
+name_idx = _col_lookup.get("startup name")
 
 # A blank-score row with a human_review checkpoint status is still a
 # completed grade — the AI finished its 3 review attempts and correctly
