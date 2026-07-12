@@ -15,6 +15,7 @@ class R2BSchemaTests(unittest.TestCase):
 
     def test_r2b_analyst_report_converts_to_generic_report(self) -> None:
         report = R2BAnalystReport(
+            video_notes="Chronological walkthrough of the video.",
             Problem_Solution=CriterionEvidence(evidence="demo", notes="demo"),
             Market_Potential=CriterionEvidence(evidence="demo", notes="demo"),
             Product_MVP_Innovation=CriterionEvidence(evidence="demo", notes="demo"),

@@ -100,7 +100,7 @@ class AdkReviewWorkflow:
     # Shared helpers
     # ------------------------------------------------------------------
 
-    def _build_parts(self, state: dict) -> list:
+    def _build_parts(self, state: dict, include_media: bool = True) -> list:
         """Build the multimodal input parts for an agent run.
 
         Video/pitch-deck media arrives one of two ways (see ResolvedVideo in
@@ -111,34 +111,42 @@ class AdkReviewWorkflow:
         → Part.from_uri. Both "*_data" and "*_url" are checked, not just
         "*_url" truthiness: a Vertex in-memory result leaves "*_url" as ""
         (falsy), so checking only "*_url" would silently drop real media.
+
+        include_media=False skips the video/deck Parts entirely (used by
+        the Head for programs with head_include_media=False — see
+        ProgramConfig) — only the text Part (raw_row_text + any error/
+        chart-text notes) is returned. This is what keeps N_SAMPLES
+        concurrent Head calls lightweight enough to parallelize safely;
+        see workflow.py's _run_r2b for the concurrency history.
         """
         parts = []
-        if not state.get("video_requires_url_context"):
-            video_data = state.get("video_data")
-            video_url = state.get("video_url")
-            if video_data or video_url:
-                mime_type = state.get("video_mime_type") or "video/mp4"
-                if video_data:
+        if include_media:
+            if not state.get("video_requires_url_context"):
+                video_data = state.get("video_data")
+                video_url = state.get("video_url")
+                if video_data or video_url:
+                    mime_type = state.get("video_mime_type") or "video/mp4"
+                    if video_data:
+                        parts.append(types.Part.from_bytes(
+                            data=video_data, mime_type=mime_type,
+                        ))
+                    else:
+                        parts.append(types.Part.from_uri(
+                            file_uri=video_url, mime_type=mime_type,
+                        ))
+            # Alchemist: pitch deck PDF as a multimodal Part (required source).
+            deck_data = state.get("pitch_deck_data")
+            deck_url = state.get("pitch_deck_url")
+            if deck_data or deck_url:
+                deck_mime = state.get("pitch_deck_mime_type", "application/pdf")
+                if deck_data:
                     parts.append(types.Part.from_bytes(
-                        data=video_data, mime_type=mime_type,
+                        data=deck_data, mime_type=deck_mime,
                     ))
                 else:
                     parts.append(types.Part.from_uri(
-                        file_uri=video_url, mime_type=mime_type,
+                        file_uri=deck_url, mime_type=deck_mime,
                     ))
-        # Alchemist: pitch deck PDF as a multimodal Part (required source).
-        deck_data = state.get("pitch_deck_data")
-        deck_url = state.get("pitch_deck_url")
-        if deck_data or deck_url:
-            deck_mime = state.get("pitch_deck_mime_type", "application/pdf")
-            if deck_data:
-                parts.append(types.Part.from_bytes(
-                    data=deck_data, mime_type=deck_mime,
-                ))
-            else:
-                parts.append(types.Part.from_uri(
-                    file_uri=deck_url, mime_type=deck_mime,
-                ))
         text = state.get("raw_row_text", "")
         # Pre-extracted text readout of image-only deck slides (charts,
         # financial tables — see video_ingestion.py's _read_chart_images).
@@ -267,10 +275,12 @@ class AdkReviewWorkflow:
             state=initial_state,
         )
         # The Head's instruction references {analyst_report}, which ADK
-        # substitutes from session state. The user message carries the
-        # video/text parts (same as the analyst saw) so the Head can ground
-        # its rationale in the source, not just the analyst's summary.
-        parts = self._build_parts(state)
+        # substitutes from session state. Whether the user message also
+        # carries the raw video/deck Parts (same as the analyst saw) is
+        # program-specific — see ProgramConfig.head_include_media. When
+        # False (R2B), the Head scores from analyst_report text alone; the
+        # grader (which still sees full media) already verified it.
+        parts = self._build_parts(state, include_media=self.program_config.head_include_media)
         async for _event in runner.run_async(
             user_id=user_id,
             session_id=session_id,
@@ -549,17 +559,40 @@ class AdkReviewWorkflow:
         # _run_head_once skips injecting it into session state.
         web_verification_report = None
 
-        samples = []
-        for i in range(self.n_samples):
+        # First attempt at this ran all N_SAMPLES Head calls concurrently
+        # via asyncio.gather unconditionally (no shared mutable state
+        # between them, so it looked safe). Confirmed live it wasn't when
+        # media was attached: R2B embedded video inline as raw bytes
+        # (Part.from_bytes, up to VERTEX_INLINE_VIDEO_MAX_BYTES=95MB per
+        # call — see video_ingestion.py), so N_SAMPLES concurrent calls
+        # meant up to N_SAMPLES x that payload in flight at once through
+        # the same shared API client — all 3 samples failed simultaneously
+        # with `400 INVALID_ARGUMENT`. head_include_media=False (R2B only;
+        # see ProgramConfig) fixes this at the root instead of working
+        # around it: the Head no longer receives the video Part at all
+        # (see _build_parts's include_media), so each call's payload is
+        # just text — parallelizing it is now safe by construction, not
+        # by luck. Alchemist/Fellowship V2 keep head_include_media=True
+        # (their Head still needs media — see ProgramConfig's field doc),
+        # so they stay on the sequential path that's already proven safe.
+        async def _run_sample(i: int) -> dict:
             try:
-                sample = await self._run_head_once(
+                return await self._run_head_once(
                     state, approved_evidence, i, web_verification_report
                 )
-                samples.append(sample)
             except Exception:
                 # A single Head sample failing (API error, schema validation)
                 # doesn't kill the row — average whatever succeeded.
-                samples.append({})
+                return {}
+
+        if self.program_config.head_include_media:
+            samples = []
+            for i in range(self.n_samples):
+                samples.append(await _run_sample(i))
+        else:
+            samples = list(await asyncio.gather(
+                *(_run_sample(i) for i in range(self.n_samples))
+            ))
 
         # Step 3: average + closest-rationale selection.
         averaged = self._average_head_samples(samples)

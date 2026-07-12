@@ -350,8 +350,13 @@ pitch evaluation. THE VIDEO IS THE ONLY SOURCE — there is no pitch deck or
 separate application text to draw on for this round. Grade entirely from
 what the video shows and says.
 
-Watch the pitch video carefully. Extract evidence for spoken claims, visual
-product demonstrations, team presentation, delivery quality, and storytelling.
+FIRST, fill in video_notes: watch the pitch video start to finish and write a
+chronological walkthrough of what is said and shown, in the order it appears.
+Do this before filling in any of the per-criterion fields below — it is your
+working notes, not final evidence, so write freely.
+
+THEN, using those notes, extract evidence for spoken claims, visual product
+demonstrations, team presentation, delivery quality, and storytelling.
 For each rubric criterion, extract concrete evidence — quote or closely
 paraphrase; never invent unsupported claims.
 
@@ -412,10 +417,11 @@ Analyst report:
 
 R2B_HEAD_INSTRUCTION = f"""
 You are the Head reviewer for a Road 2 Battlefield (R2B) startup pitch
-evaluation. The grader has ALREADY VERIFIED the analyst's evidence — your job is
-to SCORE ONLY. Do not re-verify; assume the evidence is approved and grounded.
-THE VIDEO IS THE ONLY SOURCE for this round — there is no pitch deck or
-separate application text.
+evaluation. The grader has ALREADY VERIFIED the analyst's evidence against the
+video — your job is to SCORE ONLY, from the analyst's report below. You do not
+receive the video yourself; do not re-verify or second-guess whether the
+evidence is grounded — that already happened. THE VIDEO IS THE ONLY SOURCE for
+this round — there is no pitch deck or separate application text.
 
 Score each of the 6 criteria 1-10 using the band-then-integer method:
 1. For each criterion, first pick a BAND (1-3, 4-6, 7-10).
@@ -426,27 +432,48 @@ RATIONALE-BEFORE-SCORE (critical):
 - Rationale must explain what evidence was found (or missing) that justifies
   the band and integer you chose.
 - Each level up requires MORE EVIDENCE, not just "better quality."
+- You do not see the video or any visuals yourself — only the analyst's
+  written report. Judge evidence sufficiency by what the report DESCRIBES,
+  not by whether you can personally see it. If the report describes a
+  product demo, feature, or visual (e.g. "the founder shows the app
+  generating a course from an uploaded PDF"), treat that description as
+  real evidence — the grader already confirmed it's grounded in the actual
+  video. Do NOT penalize a criterion for lacking "visual proof," "a demo
+  you can see," or similar — that evidence gap does not exist for you the
+  way it would for a human watching the video; only score down for evidence
+  the report itself says is missing, thin, or unclear.
 
 VERBOSITY GUARD:
 - Score the QUALITY of the evidence, NOT the length of the video or the
   verbosity of the pitch. A short, clear, well-structured pitch can score 7-10;
   a long, rambling one does not deserve a high score for length alone.
 
-Criterion 6 (Presentation & Clarity) evaluates the pitch delivery itself. If no video is available, score ALL criteria as 1 with rationale "No video submitted."
+Criterion 6 (Presentation & Clarity) evaluates the pitch delivery itself, as
+described in the analyst's evidence for that criterion. If the analyst's
+report states no video was submitted (missing_sources includes it, or the
+evidence text says so explicitly), score ALL criteria as 1 with rationale
+"No video submitted."
 
-DISQUALIFYING ISSUES — INTERNAL CONSISTENCY ONLY: even though the grader
-already checked this, independently confirm before scoring. Since there is
-no second source to cross-check against, only set
-disqualifying_issue_found=true for a problem visible WITHIN the video
-itself (two different, irreconcilable figures for the same metric at
-different points, or a self-evidently fabricated claim) — not for a claim
-that's merely thin, ambitious, or unverifiable. If found, score all 6
-criteria as 0 and explain exactly what was said and where the
+DISQUALIFYING ISSUES — INTERNAL CONSISTENCY ONLY: you do not have the video to
+re-check yourself, so trust the grader's approval — do not flag an issue on a
+hunch. Only set disqualifying_issue_found=true if the analyst's OWN report
+text itself states or describes two different, irreconcilable figures for the
+same metric at different points, or a self-evidently fabricated claim — not
+for a claim that's merely thin, ambitious, or unverifiable. If found, score
+all 6 criteria as 0 and quote exactly what the report says and where the
 inconsistency is in disqualifying_issue_reason.
 
 Final score = average of the 6 criterion scores. You may adjust the final score
 by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
 override_reasoning).
+
+The analyst report below includes a "video_notes" field — a full chronological
+walkthrough of the video, in addition to the six per-criterion evidence
+entries. Read video_notes for context and nuance the compressed per-criterion
+evidence may not fully capture. Do NOT cherry-pick a single isolated moment
+from video_notes to justify a harsher score than the per-criterion evidence
+supports — weigh it as supporting context for the evidence already given, not
+as a separate, stricter source you go looking for problems in.
 
 {R2B_RUBRIC_TEXT}
 

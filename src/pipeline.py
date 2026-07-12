@@ -41,13 +41,6 @@ from .video_ingestion import ingest_pitch_deck, ingest_video_for_r2b
 # convention used elsewhere in this codebase (e.g. R2B's verify loop).
 FAILURE_ESCALATION_THRESHOLD = 3
 
-# For R2B (video-only, no fallback source once video is dropped): total
-# attempts at the SAME analyst call within one process_row invocation,
-# before giving up and letting the row fall through to run_batch's
-# FAILURE_ESCALATION_THRESHOLD-gated escalation across separate runs.
-R2B_ANALYST_RETRY_ATTEMPTS = 3
-
-
 def _normalize_for_match(text: str) -> str:
     """Strip accents — used only for email-column detection, where ASCII
     matching is fine either way but consistency with the rest of the
@@ -472,29 +465,12 @@ def process_row(
         final_state = workflow.invoke(initial_state)
     except Exception as exc:
         if no_fallback_without_video:
-            # R2B (video-only, no deck/text fallback): confirmed live that
-            # the analyst occasionally fails to produce complete structured
-            # output for this round's 6-required-criteria video schema —
-            # different exact exception each time (empty criteria dict
-            # failing Pydantic validation, or a KeyError from a downstream
-            # agent referencing analyst_report that never got set) — but a
-            # fresh, independent generation attempt on the SAME video has
-            # repeatedly succeeded cleanly on retry. Retrying without video
-            # is pointless here (nothing left to grade on), but retrying
-            # the SAME call is not: give it up to R2B_ANALYST_RETRY_ATTEMPTS
-            # total tries within this one call, matching the "3 attempts"
-            # convention already used elsewhere in this codebase, instead
-            # of requiring a whole separate "Run grading" click (and
-            # re-downloading the video) per attempt.
-            last_exc = exc
-            for _ in range(R2B_ANALYST_RETRY_ATTEMPTS - 1):
-                try:
-                    final_state = workflow.invoke(initial_state)
-                    break
-                except Exception as retry_exc:
-                    last_exc = retry_exc
-            else:
-                raise last_exc
+            # R2B (video-only, no deck/text fallback): nothing left to
+            # grade on if the analyst's structured output fails, so this
+            # row just fails and falls through to run_batch's
+            # FAILURE_ESCALATION_THRESHOLD-gated escalation across
+            # separate runs, same as any other program's genuine error.
+            raise
         elif _row_has_video(initial_state):
             final_state = _retry_without_video(workflow, initial_state, exc)
         else:
@@ -539,6 +515,7 @@ def process_row(
             criterion_scores = parsed.get("criterion_scores", {})
             criterion_rationale = parsed.get("criterion_rationale", {})
         except (json.JSONDecodeError, TypeError):
+            parsed = {}
             criterion_scores = {}
             criterion_rationale = {}
             if score == 0:
@@ -557,13 +534,20 @@ def process_row(
                 criterion_rationale = {
                     c: reasoning for c in config.program_config.rubric_criteria
                 }
+                parsed = {
+                    "criterion_scores": criterion_scores,
+                    "criterion_rationale": criterion_rationale,
+                }
 
         if criterion_scores:
             total_score = round(sum(criterion_scores.values()) / len(criterion_scores), 2)
-            notes = "\n".join(
-                f"{criterion}: {criterion_rationale.get(criterion, '')}"
-                for criterion in config.program_config.rubric_criteria
-            )
+            # Same raw JSON shape Alchemist writes to its single "AI
+            # Reasoning" column (criterion_scores/criterion_rationale/
+            # n_samples/sample_scores/selected_from_sample) — confidence
+            # added on top, since neither program surfaced it to the sheet
+            # before even though _average_head_samples always computed it.
+            parsed["confidence"] = final_result.get("confidence", "")
+            notes = json.dumps(parsed, ensure_ascii=False)
         else:
             total_score = None
             notes = reasoning  # the plain-text (possibly [NEEDS HUMAN REVIEW]-prefixed) message

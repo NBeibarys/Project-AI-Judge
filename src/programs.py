@@ -73,6 +73,27 @@ class ProgramConfig:
     criterion_column_names: dict[str, str] | None = None
     total_score_column_name: str | None = None
     notes_column_name: str | None = None
+    # Whether the Head sees raw media (video/deck Parts) at all, vs. only
+    # the analyst's text evidence report (which the grader already
+    # approved). The grader is UNAFFECTED by this flag — it always sees
+    # media, since it's the one doing verification. Default True preserves
+    # existing behavior: Alchemist's Head runs its own redundant fraud/
+    # contradiction check against the actual sources (see
+    # ALCHEMIST_HEAD_INSTRUCTION's DISQUALIFICATION CHECK), and Fellowship
+    # V2's Head scores Communication_quality partly from direct audio/
+    # visual cues (teleprompter, dubbing mismatch, eyes off-screen) that a
+    # text summary can't convey — both need media. R2B sets this False:
+    # the Head "scores only," never re-verifies (that's the grader's job,
+    # which still has full video access) — see R2B_HEAD_INSTRUCTION's "Do
+    # not re-verify; assume the evidence is approved and grounded." The
+    # Head is also the one re-run N_SAMPLES times per row, so this is
+    # where the video-payload-duplication cost (and the concurrency
+    # failure it caused) actually lives. Confirmed via git blame that
+    # "Head sees raw media" was never a deliberate Alchemist choice — it
+    # was introduced in R2B's original commit and inherited by every
+    # uses_separate_head=True program through the shared _run_head_once
+    # function.
+    head_include_media: bool = True
     # Head scorer instruction (only used when uses_separate_head=True).
     head_instruction: str = ""
     # Whether this program runs a dedicated web_verifier agent between the
@@ -189,6 +210,7 @@ R2B_CONFIG = ProgramConfig(
     },
     total_score_column_name="Total Score",
     notes_column_name="Comments / Notes",
+    head_include_media=False,
     excluded_header_substrings=(),
     # This round's own output columns must be excluded from what the AI
     # sees as application text, same as every other program already

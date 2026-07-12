@@ -448,8 +448,23 @@ def build_head_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             seed=DETERMINISM_SEED,
+            # Round 2 of testing thinking_level=LOW for the Head
+            # (head_include_media=False, R2B only). Round 1 (LOW, without
+            # the Head's instruction pointing at the analyst's video_notes
+            # scratchpad field) showed a genuine severity bias — see git
+            # history for the full comparison. This round pairs LOW with an
+            # explicit video_notes reference in R2B_HEAD_INSTRUCTION, on
+            # the theory that some of that bias came from the Head not
+            # using context that was already in its payload, not from
+            # reduced reasoning budget alone. Must be re-validated against
+            # the SAME row's prior LOW-only baseline before trusting it —
+            # do not assume this fixes it without checking.
             thinking_config=types.ThinkingConfig(
-                thinking_level=types.ThinkingLevel.HIGH,
+                thinking_level=(
+                    types.ThinkingLevel.LOW
+                    if program_config.head_include_media is False
+                    else types.ThinkingLevel.HIGH
+                ),
             ),
             # response_mime_type omitted — see web_verifier comment above.
             tool_config=_build_tool_config(head_model),
@@ -457,7 +472,11 @@ def build_head_agent(
         instruction=program_config.head_instruction,
         output_schema=head_schema,
         output_key="head_score",
-        tools=[url_context],
+        # url_context is dead weight when the Head has no media/URLs to
+        # check at all (head_include_media=False, R2B) — kept for
+        # Alchemist/Fellowship V2, whose Head may reference applicant URLs
+        # from the analyst's evidence.
+        tools=[url_context] if program_config.head_include_media else [],
         timeout=240,
     )
 

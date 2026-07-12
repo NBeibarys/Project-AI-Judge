@@ -200,6 +200,28 @@ class AnalystReport(BaseModel):
 
 class R2BAnalystReport(BaseModel):
     """Explicit analyst schema for the R2B rubric with concrete field names."""
+    # Written FIRST (field order drives generation order in structured
+    # output) — same pattern as AlchemistAnalystReport.key_facts_cross_check.
+    # R2B has no deck/text to draw on, so there's nothing to cross-check
+    # against; this field instead makes the model do a full chronological
+    # pass over the video in prose BEFORE committing to the 6 strict
+    # per-criterion structured fields below. Confirmed live that without
+    # this warm-up step, the analyst regularly produced incomplete/invalid
+    # structured output (empty criteria dict, missing fields) on this
+    # round's harder video-only extraction task; Alchemist's equivalent
+    # scratchpad field never has this problem.
+    video_notes: str = Field(
+        min_length=1,
+        description=(
+            "STEP 1: Watch the full pitch video start to finish. Write a "
+            "chronological walkthrough of what is said and shown — the "
+            "problem, product/demo, market/business claims, team, and any "
+            "numbers or dates mentioned, in the order they appear. Note "
+            "explicitly if the same metric (revenue, users, timeline) is "
+            "stated differently at two different points. Use this as your "
+            "working notes before filling in the structured fields below."
+        ),
+    )
     Problem_Solution: CriterionEvidence
     Market_Potential: CriterionEvidence
     Product_MVP_Innovation: CriterionEvidence
