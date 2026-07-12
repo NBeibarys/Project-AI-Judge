@@ -395,15 +395,37 @@ revise. Do not include any scores.
 DISQUALIFYING ISSUES — INTERNAL CONSISTENCY ONLY:
 Since there is no second source to cross-check against, only flag
 disqualifying_issue_found=true for a problem visible WITHIN the video
-itself: e.g. the founder states two different, irreconcilable figures for
-the same metric (revenue, users, timeline) at different points in the same
-video, or makes a claim that is self-evidently fabricated on its face. Do
-NOT flag it for a claim simply being unverifiable, ambitious, or thin on
+itself: the founder states two figures for the SAME metric that CANNOT
+both be true under any reasonable reading, or makes a claim that is
+self-evidently fabricated on its face.
+
+BEFORE you call anything a contradiction, actively ask: is there ANY
+plausible, reasonable explanation that lets both statements be true at
+once? Common innocent explanations that are NOT contradictions:
+- Rounding or approximation: "$10" vs "$9.90" is the same price, not a lie.
+- Different currencies: slides are often in local currency while the
+  founder speaks in dollars — "308M AZN" and "$180M" are the same market
+  size at the exchange rate. Convert before comparing.
+- Different metrics that merely sound similar: MRR (monthly RECURRING
+  revenue) vs total or average monthly sales are different numbers by
+  definition — recurring revenue is a subset of total sales, so a smaller
+  MRR alongside larger total sales is consistent. Same for any subset vs
+  total (paying users vs all users, one product's revenue vs company
+  revenue).
+- Different time periods or snapshots, a projection vs an actual, or a
+  current market vs an expansion target ("we operate in CIS" and "we are
+  targeting the US" can both be true).
+If ANY such explanation fits, it is NOT a contradiction — treat it as
+ordinary evidence and do not flag it.
+
+Do NOT flag a claim simply for being unverifiable, ambitious, or thin on
 detail — that's an ordinary evidence gap (approved=false with feedback),
 not a disqualification. When you do flag it, disqualifying_issue_type is
-"contradiction" for the two-different-figures case or "fraud" for a
+"contradiction" for the two-irreconcilable-figures case or "fraud" for a
 self-evidently fabricated claim, and disqualifying_issue_reason must state
-exactly what was said and where the inconsistency is.
+exactly what was said, where, and explicitly WHY no reasonable explanation
+(rounding, currency conversion, different metrics, timeframes) reconciles
+the two statements.
 
 If the evidence is grounded, complete, and covers all 6 criteria (with video
 evidence for criterion 6), set approved=true.
@@ -457,11 +479,25 @@ evidence text says so explicitly), score ALL criteria as 1 with rationale
 DISQUALIFYING ISSUES — INTERNAL CONSISTENCY ONLY: you do not have the video to
 re-check yourself, so trust the grader's approval — do not flag an issue on a
 hunch. Only set disqualifying_issue_found=true if the analyst's OWN report
-text itself states or describes two different, irreconcilable figures for the
-same metric at different points, or a self-evidently fabricated claim — not
-for a claim that's merely thin, ambitious, or unverifiable. If found, score
-all 6 criteria as 0 and quote exactly what the report says and where the
-inconsistency is in disqualifying_issue_reason.
+text itself states or describes two figures for the SAME metric that CANNOT
+both be true under any reasonable reading, or a self-evidently fabricated
+claim — not for a claim that's merely thin, ambitious, or unverifiable.
+
+BEFORE you call anything a contradiction, actively ask: is there ANY
+plausible, reasonable explanation that lets both statements be true at once?
+Rounding ("$10" vs "$9.90"), different currencies (a slide in local currency
+vs the founder speaking in dollars — convert at the exchange rate before
+comparing), different metrics that merely sound similar (MRR is RECURRING
+revenue, a subset of total/average sales — a smaller MRR alongside larger
+total sales is consistent, not contradictory; same for any subset vs total),
+different time periods, a projection vs an actual, or a current market vs an
+expansion target. If ANY such explanation fits, it is NOT a contradiction —
+do not flag it.
+
+If found, score all 6 criteria as 0, quote exactly what the report says and
+where the inconsistency is, and state explicitly WHY no reasonable
+explanation (rounding, currency, different metrics, timeframes) reconciles
+the two statements in disqualifying_issue_reason.
 
 Final score = average of the 6 criterion scores. You may adjust the final score
 by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
