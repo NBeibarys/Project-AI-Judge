@@ -432,19 +432,21 @@ class AdkReviewWorkflow:
         # reviews the flagged reason before it's treated as final.
         contradiction_samples = [s for s in valid if s.get("contradiction_found")]
         disqualified_samples = [s for s in valid if s.get("disqualifying_issue_found")]
-        if contradiction_samples or disqualified_samples:
-            reasons = "; ".join(
-                s.get("contradiction_reason", "").strip()
-                for s in contradiction_samples
-                if s.get("contradiction_reason", "").strip()
-            )
-            disq_reasons = "; ".join(
-                f"{s.get('disqualifying_issue_type', 'issue')}: "
-                f"{s.get('disqualifying_issue_reason', '').strip()}"
-                for s in disqualified_samples
-                if s.get("disqualifying_issue_reason", "").strip()
-            )
-            all_reasons = "; ".join(r for r in (reasons, disq_reasons) if r)
+        # Deduplicated: at temp=0 all N samples typically flag the SAME
+        # issue verbatim, and the old plain join wrote it 3x into the sheet.
+        flag_reasons = list(dict.fromkeys(
+            r for r in (
+                [s.get("contradiction_reason", "").strip() for s in contradiction_samples]
+                + [
+                    f"{s.get('disqualifying_issue_type', 'issue')}: "
+                    f"{s.get('disqualifying_issue_reason', '').strip()}"
+                    for s in disqualified_samples
+                    if s.get("disqualifying_issue_reason", "").strip()
+                ]
+            ) if r
+        ))
+        if (contradiction_samples or disqualified_samples) and self.program_config.contradiction_auto_zero:
+            all_reasons = "; ".join(flag_reasons)
             return {
                 "score": 0,
                 "reasoning": json.dumps(
@@ -498,22 +500,27 @@ class AdkReviewWorkflow:
         confs = [s.get("confidence", "medium") for s in valid]
         consensus_conf = min(confs, key=lambda c: rank.get(c, 1)) if confs else "medium"
 
+        payload = {
+            "criterion_scores": avg_criterion_scores,
+            "criterion_rationale": selected_rationale,
+            "n_samples": len(samples),
+            "n_valid": len(valid),
+            "n_failed": len(samples) - len(valid),
+            "sample_scores": [s.get("final_score") for s in valid],
+            "selected_from_sample": valid.index(closest) + 1,
+        }
+        # contradiction_auto_zero=False (R2B): an inconsistency was flagged
+        # but does NOT zero the application — the Head already priced it
+        # into the relevant criterion scores (see R2B_HEAD_INSTRUCTION).
+        # Surface the flagged reason(s) in the notes and mark the row for
+        # human review; disqualification is the human reviewer's decision.
+        if flag_reasons:
+            payload["inconsistency_flags"] = flag_reasons
         return {
             "score": avg_final,
-            "reasoning": json.dumps(
-                {
-                    "criterion_scores": avg_criterion_scores,
-                    "criterion_rationale": selected_rationale,
-                    "n_samples": len(samples),
-                    "n_valid": len(valid),
-                    "n_failed": len(samples) - len(valid),
-                    "sample_scores": [s.get("final_score") for s in valid],
-                    "selected_from_sample": valid.index(closest) + 1,
-                },
-                ensure_ascii=False,
-            ),
+            "reasoning": json.dumps(payload, ensure_ascii=False),
             "confidence": consensus_conf or selected_confidence,
-            "human_review_flag": False,
+            "human_review_flag": bool(flag_reasons),
         }
 
     async def _run_r2b(self, state: dict) -> dict:

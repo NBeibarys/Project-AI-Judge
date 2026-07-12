@@ -175,6 +175,13 @@ class R2BApprovalGate(BaseAgent):
     ``human_review_flag=true`` on exhaustion.
     """
 
+    # Mirrors ProgramConfig.contradiction_auto_zero. When False (R2B), a
+    # grader-side disqualifying flag no longer short-circuits the loop to
+    # a definitive 0 — the inconsistency is folded into the feedback so
+    # the analyst records it as evidence, and the Head prices it into the
+    # relevant criterion scores; zeroing is the human reviewer's call.
+    contradiction_auto_zero: bool = True
+
     async def _run_async_impl(
         self, ctx: InvocationContext
     ) -> AsyncGenerator[Event, None]:
@@ -182,7 +189,24 @@ class R2BApprovalGate(BaseAgent):
         attempt = int(state.get("attempt", 1))
         verdict = _as_dict(state.get("grader_verdict", {}))
         approved, exhausted = r2b_gate_decision(verdict, attempt)
-        disqualified = bool(verdict.get("disqualifying_issue_found"))
+        disqualified = (
+            bool(verdict.get("disqualifying_issue_found"))
+            and self.contradiction_auto_zero
+        )
+        if verdict.get("disqualifying_issue_found") and not self.contradiction_auto_zero:
+            # Keep the observation, drop the verdict: make sure the issue
+            # text reaches the analyst's revision (or simply the record)
+            # via feedback instead of ending the review with a 0.
+            issue_note = (
+                f"[INCONSISTENCY NOTED — record as evidence, do not treat "
+                f"as disqualifying] {verdict.get('disqualifying_issue_reason', '')}"
+            )
+            verdict = {
+                **verdict,
+                "feedback": "\n".join(
+                    part for part in (verdict.get("feedback", ""), issue_note) if part
+                ),
+            }
 
         delta = {
             "grader_feedback": verdict.get("feedback", ""),
@@ -393,7 +417,10 @@ def build_root_agent(
         tools=[url_context],
         timeout=240,
     )
-    gate = R2BApprovalGate(name="approval_gate")
+    gate = R2BApprovalGate(
+        name="approval_gate",
+        contradiction_auto_zero=program_config.contradiction_auto_zero,
+    )
     max_iter = 3
     # Web verifier was removed: the 3-agent pipeline (analyst -> grader -> gate)
     # is reliable and the rubric already handles unverified claims via the

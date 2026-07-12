@@ -73,6 +73,18 @@ class ProgramConfig:
     criterion_column_names: dict[str, str] | None = None
     total_score_column_name: str | None = None
     notes_column_name: str | None = None
+    # Whether a confirmed contradiction/disqualifying flag automatically
+    # zeroes the whole application. True preserves Alchemist/Fellowship
+    # V2's existing behavior (cross-source contradictions between
+    # independent artifacts carry real fraud signal there). R2B sets
+    # False after 7 out of 7 live auto-zeros proved to be false positives
+    # (currency conversion, rounding, MRR-vs-sales, roadmap-vs-status,
+    # "250+" vs "300+", conflicting GOALS...) — per the user's decision,
+    # an internal inconsistency in a single live pitch video now
+    # penalizes the relevant rubric criterion/criteria and flags the row
+    # for human review with the inconsistency spelled out in the notes;
+    # zeroing is the human reviewer's call, never automatic.
+    contradiction_auto_zero: bool = True
     # Whether the Head sees raw media (video/deck Parts) at all, vs. only
     # the analyst's text evidence report (which the grader already
     # approved). The grader is UNAFFECTED by this flag — it always sees
@@ -211,6 +223,7 @@ R2B_CONFIG = ProgramConfig(
     total_score_column_name="Total Score",
     notes_column_name="Comments / Notes",
     head_include_media=False,
+    contradiction_auto_zero=False,
     excluded_header_substrings=(),
     # This round's own output columns must be excluded from what the AI
     # sees as application text, same as every other program already

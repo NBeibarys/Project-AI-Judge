@@ -548,6 +548,13 @@ def process_row(
             # before even though _average_head_samples always computed it.
             parsed["confidence"] = final_result.get("confidence", "")
             notes = json.dumps(parsed, ensure_ascii=False)
+            # Flagged-but-scored rows (an inconsistency was priced into the
+            # criterion scores instead of zeroing — contradiction_auto_zero
+            # False) still need the human-review marker the app's display
+            # logic looks for; plain-text paths get it via `reasoning`
+            # above, but this JSON path is built from raw_reasoning.
+            if human_review_flag:
+                notes = f"[NEEDS HUMAN REVIEW] {notes}"
         else:
             total_score = None
             notes = reasoning  # the plain-text (possibly [NEEDS HUMAN REVIEW]-prefixed) message

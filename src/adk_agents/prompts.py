@@ -392,12 +392,16 @@ If any evidence is unreliable, incomplete, or missing, set approved=false and
 give exact, actionable correction instructions in feedback so the analyst can
 revise. Do not include any scores.
 
-DISQUALIFYING ISSUES — INTERNAL CONSISTENCY ONLY:
-Since there is no second source to cross-check against, only flag
-disqualifying_issue_found=true for a problem visible WITHIN the video
-itself: the founder states two figures for the SAME metric that CANNOT
-both be true under any reasonable reading, or makes a claim that is
-self-evidently fabricated on its face.
+INTERNAL INCONSISTENCIES — RECORD AS EVIDENCE, DO NOT PUNISH:
+An inconsistency within the video (two figures for the same metric stated
+differently at different points) is NOT grounds for rejecting the evidence
+and NOT grounds for disqualification. Your job with an inconsistency is to
+make sure the analyst RECORDED it accurately in the evidence — the Head
+prices it into the relevant criterion scores, and a human reviewer makes
+any disqualification decision. Reserve disqualifying_issue_found=true for
+one case only: the pitch itself is self-evidently plagiarized,
+impersonated, or fabricated wholesale. Two numbers merely disagreeing
+never qualifies.
 
 BEFORE you call anything a contradiction, actively ask: is there ANY
 plausible, reasonable explanation that lets both statements be true at
@@ -425,14 +429,13 @@ once? Common innocent explanations that are NOT contradictions:
 If ANY such explanation fits, it is NOT a contradiction — treat it as
 ordinary evidence and do not flag it.
 
-Do NOT flag a claim simply for being unverifiable, ambitious, or thin on
-detail — that's an ordinary evidence gap (approved=false with feedback),
-not a disqualification. When you do flag it, disqualifying_issue_type is
-"contradiction" for the two-irreconcilable-figures case or "fraud" for a
-self-evidently fabricated claim, and disqualifying_issue_reason must state
-exactly what was said, where, and explicitly WHY no reasonable explanation
-(rounding, currency conversion, different metrics, timeframes) reconciles
-the two statements.
+If a genuine, irreconcilable inconsistency survives that test: confirm the
+analyst's evidence states BOTH conflicting figures and where each was said
+(if it doesn't, approved=false with feedback telling the analyst to record
+the inconsistency). Do not reject otherwise-complete evidence because an
+inconsistency exists, and do NOT flag a claim simply for being
+unverifiable, ambitious, or thin on detail — that's an ordinary evidence
+gap (approved=false with feedback), not a problem with the applicant.
 
 If the evidence is grounded, complete, and covers all 6 criteria (with video
 evidence for criterion 6), set approved=true.
@@ -483,12 +486,12 @@ report states no video was submitted (missing_sources includes it, or the
 evidence text says so explicitly), score ALL criteria as 1 with rationale
 "No video submitted."
 
-DISQUALIFYING ISSUES — INTERNAL CONSISTENCY ONLY: you do not have the video to
-re-check yourself, so trust the grader's approval — do not flag an issue on a
-hunch. Only set disqualifying_issue_found=true if the analyst's OWN report
-text itself states or describes two figures for the SAME metric that CANNOT
-both be true under any reasonable reading, or a self-evidently fabricated
-claim — not for a claim that's merely thin, ambitious, or unverifiable.
+INTERNAL INCONSISTENCIES — PRICE INTO THE RELEVANT CRITERIA, NEVER ZERO:
+You do not have the video to re-check yourself — judge only from what the
+analyst's report describes. An inconsistency (the report describes two
+figures for the same metric that genuinely cannot both be true) does NOT
+zero the application and is NOT a disqualification — a human reviewer
+makes that call, not you.
 
 BEFORE you call anything a contradiction, actively ask: is there ANY
 plausible, reasonable explanation that lets both statements be true at once?
@@ -504,10 +507,23 @@ targets, not achieved traction — it cannot contradict a statement about
 today's status), or a current market vs an expansion target. If ANY such
 explanation fits, it is NOT a contradiction — do not flag it.
 
-If found, score all 6 criteria as 0, quote exactly what the report says and
-where the inconsistency is, and state explicitly WHY no reasonable
-explanation (rounding, currency, different metrics, timeframes) reconciles
-the two statements in disqualifying_issue_reason.
+If a genuine, irreconcilable inconsistency survives that test, do this and
+ONLY this:
+1. Penalize the criterion or criteria where the inconsistent claims
+   actually live — conflicting revenue or pricing figures → Business
+   Model; conflicting market-size figures → Market Potential; conflicting
+   traction/user/customer counts → Product/MVP & Innovation and/or Market
+   Potential; a narrative muddled enough to contradict itself →
+   Presentation & Clarity. Score those criteria 1-3 bands lower than the
+   evidence would otherwise earn, and name the inconsistency explicitly
+   in each affected criterion's rationale (quote both statements).
+   Criteria the inconsistency does not touch are scored normally.
+2. Set contradiction_found=true and quote both conflicting statements in
+   contradiction_reason — this flags the row for human review, where the
+   disqualification decision belongs.
+Never set disqualifying_issue_found for numeric inconsistencies — reserve
+it for a pitch that is self-evidently plagiarized, impersonated, or
+fabricated wholesale.
 
 Final score = average of the 6 criterion scores. You may adjust the final score
 by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
