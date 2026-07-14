@@ -1,0 +1,80 @@
+"""Pure segment logic for round-video auto-indexing.
+
+No I/O here — timestamp parsing/formatting and structural validation of a
+proposed segment list, shared by the indexer (src/round_indexer.py) and the
+grading pipeline's virtual-clip input assembly (src/pipeline.py).
+Spec: docs/superpowers/specs/2026-07-14-round-video-auto-indexing-design.md
+"""
+
+# Sheet column headers the operator adds once per round tab. Resolved by
+# name (whitespace/case-tolerant) everywhere — never by position.
+SEGMENT_START_COLUMN = "Segment Start"
+SEGMENT_END_COLUMN = "Segment End"
+
+# A pitch+Q&A slot shorter than a minute or longer than half an hour is
+# far outside how these competitions run — almost certainly a hallucinated
+# or misread boundary, so fail closed and let the operator decide.
+MIN_SEGMENT_SECONDS = 60
+MAX_SEGMENT_SECONDS = 30 * 60
+
+
+class SegmentValidationError(ValueError):
+    """A proposed segment list (or single timestamp) failed validation."""
+
+
+def parse_timestamp(text: str) -> int:
+    """'3:12' -> 192; '1:02:48' -> 3768. Raises SegmentValidationError."""
+    parts = [p for p in (text or "").strip().split(":")]
+    if not 2 <= len(parts) <= 3 or not all(p.isdigit() and p != "" for p in parts):
+        raise SegmentValidationError(f"Unparseable timestamp: {text!r}")
+    numbers = [int(p) for p in parts]
+    hours, minutes, seconds = ([0] + numbers) if len(numbers) == 2 else numbers
+    if minutes > 59 or seconds > 59:
+        raise SegmentValidationError(f"Out-of-range minutes/seconds: {text!r}")
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def seconds_to_timestamp(total: int) -> str:
+    """192 -> '3:12'; 3768 -> '1:02:48' (inverse of parse_timestamp)."""
+    hours, rest = divmod(total, 3600)
+    minutes, seconds = divmod(rest, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+def validate_segments(
+    segments: list[tuple[str, int, int]],
+    expected_names: list[str],
+) -> None:
+    """Fail closed on any structural problem with a proposed segment list.
+
+    segments: [(startup_name, start_seconds, end_seconds), ...] in video
+    order. expected_names: the sheet tab's startup names (no-shows already
+    excluded). Checks: exact name set match, end > start, plausible length,
+    strictly ordered and non-overlapping.
+    """
+    got = [name for name, _, _ in segments]
+    if sorted(got) != sorted(expected_names):
+        missing = sorted(set(expected_names) - set(got))
+        unexpected = sorted(set(got) - set(expected_names))
+        raise SegmentValidationError(
+            f"Segment names must match the sheet exactly; "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    previous_end = -1
+    for name, start, end in segments:
+        if end <= start:
+            raise SegmentValidationError(f"{name}: end ({end}s) <= start ({start}s)")
+        length = end - start
+        if not MIN_SEGMENT_SECONDS <= length <= MAX_SEGMENT_SECONDS:
+            raise SegmentValidationError(
+                f"{name}: implausible segment length {length}s "
+                f"(allowed {MIN_SEGMENT_SECONDS}-{MAX_SEGMENT_SECONDS}s)"
+            )
+        if start < previous_end:
+            raise SegmentValidationError(
+                f"{name}: starts at {start}s, before the previous segment "
+                f"ends at {previous_end}s (segments must not overlap)"
+            )
+        previous_end = end
