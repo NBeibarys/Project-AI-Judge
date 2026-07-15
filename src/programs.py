@@ -238,6 +238,7 @@ R2B_CONFIG = ProgramConfig(
         "Product/MVP & Innovation (10 pts max)", "Team Strength (10 pts max)",
         "Business Model (10 pts max)", "Presentation & Clarity (10 pts)",
         "Total Score", "Comments / Notes",
+        "Segment Start", "Segment End",
     }),
 )
 

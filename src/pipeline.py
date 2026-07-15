@@ -32,6 +32,12 @@ from .google_clients import (
 )
 from .video_urls import ResolvedVideo, VideoResolutionError, resolve_video_url
 from .video_ingestion import ingest_pitch_deck, ingest_video_for_r2b
+from .round_segments import (
+    SEGMENT_END_COLUMN,
+    SEGMENT_START_COLUMN,
+    SegmentValidationError,
+    parse_timestamp,
+)
 
 # Header exclusion lists are program-specific — see ProgramConfig fields
 # excluded_header_substrings and excluded_header_names in src/programs.py.
@@ -107,6 +113,35 @@ def _find_name_column_index(header: list) -> int | None:
         if any(hint in _normalize_for_match(col) for hint in _NAME_COLUMN_HINTS):
             return i
     return None
+
+
+def _read_segment_bounds(header: list, row: list) -> tuple[int, int] | None:
+    """(start_s, end_s) from the row's segment cells, or None.
+
+    None (-> today's full-video behavior) whenever the columns are absent,
+    either cell is blank, carries the indexer's 'NEEDS CHECK' marker, is
+    unparseable, or the bounds are inverted — a bad segment must never
+    break grading, only opt out of clipping. Mixed rounds (some rows with
+    founder-submitted individual clips) therefore need no special casing.
+    """
+    lookup = {}
+    for i, col in enumerate(header):
+        lookup.setdefault(col.strip().lower(), i)
+    start_idx = lookup.get(SEGMENT_START_COLUMN.lower())
+    end_idx = lookup.get(SEGMENT_END_COLUMN.lower())
+    if start_idx is None or end_idx is None:
+        return None
+    raw_start = (row[start_idx] if len(row) > start_idx else "").strip()
+    raw_end = (row[end_idx] if len(row) > end_idx else "").strip()
+    if not raw_start or not raw_end:
+        return None
+    try:
+        start_s, end_s = parse_timestamp(raw_start), parse_timestamp(raw_end)
+    except SegmentValidationError:
+        return None
+    if end_s <= start_s:
+        return None
+    return start_s, end_s
 
 
 def _derive_row_id(
@@ -382,6 +417,31 @@ def process_row(
             # Part (video_url is set) AND append "VIDEO UNAVAILABLE: ..."
             # (video_error is set) — a contradictory state for the analyst.
             initial_state.pop("video_error", None)
+
+    # Virtual clip (round-video auto-indexing): a YouTube round URL plus
+    # operator-reviewed Segment Start/End cells means Gemini should watch
+    # only this startup's span — clipped server-side, no cut files. See
+    # docs/superpowers/specs/2026-07-14-round-video-auto-indexing-design.md
+    segment_bounds = _read_segment_bounds(header, row)
+    if segment_bounds and initial_state.get("video_url"):
+        initial_state["video_segment_start_s"] = segment_bounds[0]
+        initial_state["video_segment_end_s"] = segment_bounds[1]
+        # Wrong-segment tripwire — lives in row text, NOT in any agent
+        # prompt: if the timestamps point at a different startup's pitch,
+        # the analyst says so, the grader loop escalates via the existing
+        # human-review path, and no score is written.
+        startup_name = ""
+        name_idx = _find_name_column_index(header)
+        if name_idx is not None and len(row) > name_idx:
+            startup_name = row[name_idx].strip()
+        if startup_name:
+            initial_state["raw_row_text"] += (
+                f"\n\nVIDEO SEGMENT NOTE: this video segment should be the "
+                f"pitch by {startup_name} — if the founders are clearly "
+                f"pitching a different company, state that explicitly in "
+                f"your evidence instead of extracting evidence for "
+                f"{startup_name}."
+            )
 
     # R2B is video-primary and criterion 6 (Presentation & Clarity) requires
     # video evidence. The R2B prompts instruct the grader to score criterion 6

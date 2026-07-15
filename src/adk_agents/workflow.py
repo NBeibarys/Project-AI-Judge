@@ -131,8 +131,22 @@ class AdkReviewWorkflow:
                             data=video_data, mime_type=mime_type,
                         ))
                     else:
-                        parts.append(types.Part.from_uri(
-                            file_uri=video_url, mime_type=mime_type,
+                        # Virtual clip: with segment offsets in state (round-
+                        # video auto-indexing), Gemini fetches ONLY that span of
+                        # the URL server-side — the agents receive what looks
+                        # like an individual clip. Without offsets this builds
+                        # the same file_data Part from_uri always built.
+                        part_kwargs = {}
+                        if state.get("video_segment_start_s") is not None:
+                            part_kwargs["video_metadata"] = types.VideoMetadata(
+                                start_offset=f"{state['video_segment_start_s']}s",
+                                end_offset=f"{state['video_segment_end_s']}s",
+                            )
+                        parts.append(types.Part(
+                            file_data=types.FileData(
+                                file_uri=video_url, mime_type=mime_type,
+                            ),
+                            **part_kwargs,
                         ))
             # Alchemist: pitch deck PDF as a multimodal Part (required source).
             deck_data = state.get("pitch_deck_data")

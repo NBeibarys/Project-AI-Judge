@@ -1,5 +1,6 @@
 import unittest
 
+from src.pipeline import _read_segment_bounds
 from src.round_segments import (
     SegmentValidationError,
     parse_timestamp,
@@ -65,6 +66,33 @@ class ValidateSegmentsTests(unittest.TestCase):
         too_long = [("Alpha", 60, 60 + 31 * 60), ("Beta", 2000, 2400), ("Gamma", 2405, 2800)]
         with self.assertRaises(SegmentValidationError):
             validate_segments(too_long, ["Alpha", "Beta", "Gamma"])
+
+
+class ReadSegmentBoundsTests(unittest.TestCase):
+    HEADER = ["Startup Name", "Video", "Segment Start", "Segment End"]
+
+    def test_parses_clean_cells(self) -> None:
+        row = ["Alpha", "https://youtube.com/watch?v=x", "3:12", "9:48"]
+        self.assertEqual(_read_segment_bounds(self.HEADER, row), (192, 588))
+
+    def test_blank_cells_mean_no_segment(self) -> None:
+        row = ["Alpha", "https://youtube.com/watch?v=x", "", ""]
+        self.assertIsNone(_read_segment_bounds(self.HEADER, row))
+
+    def test_needs_check_marker_means_no_segment(self) -> None:
+        row = ["Alpha", "url", "NEEDS CHECK: 3:12", "NEEDS CHECK: 9:48"]
+        self.assertIsNone(_read_segment_bounds(self.HEADER, row))
+
+    def test_malformed_cells_mean_no_segment(self) -> None:
+        row = ["Alpha", "url", "3:12", "oops"]
+        self.assertIsNone(_read_segment_bounds(self.HEADER, row))
+
+    def test_missing_columns_mean_no_segment(self) -> None:
+        self.assertIsNone(_read_segment_bounds(["Startup Name", "Video"], ["Alpha", "url"]))
+
+    def test_inverted_bounds_mean_no_segment(self) -> None:
+        row = ["Alpha", "url", "9:48", "3:12"]
+        self.assertIsNone(_read_segment_bounds(self.HEADER, row))
 
 
 if __name__ == "__main__":
