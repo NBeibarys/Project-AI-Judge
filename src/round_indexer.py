@@ -20,6 +20,8 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from .google_clients import _col_letter, get_sheets_service, read_sheet_rows
+from .pipeline import _is_no_show
 from .round_segments import (
     SEGMENT_END_COLUMN,
     SEGMENT_START_COLUMN,
@@ -172,3 +174,75 @@ def index_round(youtube_url: str, startup_names: list[str], model: str) -> list[
             verified=_names_match(seg.startup_name, seen),
         ))
     return results
+
+
+def _write_row_cells(sheets_service, sheet_id: str, sheet_name: str,
+                     sheet_row_number: int, values_by_header: dict,
+                     col_lookup: dict) -> None:
+    """Write named cells on one row, one update per cell (same per-cell
+    style as write_multi_row_result — these columns aren't contiguous)."""
+    for header_name, value in values_by_header.items():
+        idx = col_lookup[header_name.strip().lower()]
+        letter = _col_letter(idx + 1)
+        sheets_service.spreadsheets().values().update(
+            spreadsheetId=sheet_id,
+            range=f"{sheet_name}!{letter}{sheet_row_number}",
+            valueInputOption="RAW",
+            body={"values": [[value]]},
+        ).execute(num_retries=5)
+
+
+def run_round_indexing(config, youtube_url: str) -> dict:
+    """Index one round recording and write results to the sheet.
+
+    Reads the round tab via `config` (same sheet geometry the grading run
+    uses), excludes no-show rows, runs index_round, and writes: the round
+    URL into each indexed row's Video cell, and start/end into the two
+    segment columns (prefixed 'NEEDS CHECK: ' when the verifier saw a
+    different startup). Returns a summary dict for the app UI:
+    {"indexed": n, "needs_check": n, "segments": [RoundSegment, ...]}.
+    Fails loudly if the operator hasn't added the two segment columns or a
+    Startup Name/Video column is missing.
+    """
+    sheets_service = get_sheets_service(config.service_account_path)
+    header, rows = read_sheet_rows(
+        sheets_service, config.sheet_id, config.sheet_range, config.header_row,
+    )
+    col_lookup = {}
+    for i, col in enumerate(header):
+        col_lookup.setdefault(col.strip().lower(), i)
+    for required in ("startup name", "video",
+                     SEGMENT_START_COLUMN.lower(), SEGMENT_END_COLUMN.lower()):
+        if required not in col_lookup:
+            raise RuntimeError(
+                f"Column {required!r} not found on the tab — add the "
+                f"'{SEGMENT_START_COLUMN}' and '{SEGMENT_END_COLUMN}' header "
+                "cells once per round tab (see design doc)."
+            )
+
+    name_idx = col_lookup["startup name"]
+    candidates: list[tuple[int, str]] = []  # (sheet_row_number, name)
+    for i, row in enumerate(rows):
+        name = (row[name_idx] if len(row) > name_idx else "").strip()
+        if name and not _is_no_show(name):
+            candidates.append((config.header_row + i + 1, name))
+
+    segments = index_round(youtube_url, [n for _, n in candidates], config.analyzer_model)
+    by_name = {s.startup_name: s for s in segments}
+
+    sheet_name = config.sheet_range.split("!")[0].strip("'")
+    needs_check = 0
+    for sheet_row_number, name in candidates:
+        seg = by_name[name]
+        prefix = "" if seg.verified else "NEEDS CHECK: "
+        needs_check += 0 if seg.verified else 1
+        _write_row_cells(
+            sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+            {
+                "Video": youtube_url,
+                SEGMENT_START_COLUMN: f"{prefix}{seg.start}",
+                SEGMENT_END_COLUMN: f"{prefix}{seg.end}",
+            },
+            col_lookup,
+        )
+    return {"indexed": len(segments), "needs_check": needs_check, "segments": segments}
