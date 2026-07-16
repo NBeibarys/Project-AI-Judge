@@ -243,9 +243,23 @@ if st.button("🔄 Refresh data"):
     st.rerun()
 
 sheets_service = get_sheets_service(config.service_account_path)
-header, rows = read_sheet_rows(
-    sheets_service, config.sheet_id, config.sheet_range, config.header_row
-)
+try:
+    header, rows = read_sheet_rows(
+        sheets_service, config.sheet_id, config.sheet_range, config.header_row
+    )
+except Exception as exc:  # noqa: BLE001 — operator-facing surface
+    # A wrong tab name used to crash the WHOLE app with an uncaught
+    # traceback ("Unable to parse range: ...") — confirmed live when a
+    # Sheet ID was switched while the tab field still held the previous
+    # sheet's tab name. Fail with guidance instead.
+    st.error(
+        f"Could not read the sheet: {exc}\n\n"
+        "Most common cause: the 'Sheet tab / range' field doesn't match "
+        "any tab on the selected Sheet ID — tab names differ per sheet "
+        "(check the tabs at the bottom of the Google Sheet and update "
+        "the sidebar field)."
+    )
+    st.stop()
 
 # Whitespace/case-tolerant column lookup: the real R2B sheet has headers
 # like "Startup Name" (capital N) and "Total Score " (trailing space) —
