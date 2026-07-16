@@ -19,8 +19,13 @@ class ParseTimestampTests(unittest.TestCase):
     def test_strips_whitespace(self) -> None:
         self.assertEqual(parse_timestamp(" 12:05 "), 725)
 
+    def test_minutes_beyond_hour_in_two_part_form(self) -> None:
+        # Past the hour mark, "61:03" (= 1:01:03) is how models and video
+        # players naturally write it — confirmed live on a real recording.
+        self.assertEqual(parse_timestamp("61:03"), 3663)
+
     def test_rejects_garbage(self) -> None:
-        for bad in ("", "12", "1:2:3:4", "3:75", "abc", "3:1x"):
+        for bad in ("", "12", "1:2:3:4", "3:75", "1:61:03", "abc", "3:1x"):
             with self.assertRaises(SegmentValidationError, msg=bad):
                 parse_timestamp(bad)
 
