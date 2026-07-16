@@ -181,7 +181,8 @@ with st.sidebar:
             else:
                 st.success(
                     f"Indexed {summary['indexed']} startups "
-                    f"({summary['needs_check']} marked NEEDS CHECK). "
+                    f"({summary['needs_check']} marked NEEDS CHECK, "
+                    f"{summary.get('no_pitch', 0)} with no gradeable pitch). "
                     "Review the Segment columns in the sheet, then run grading."
                 )
                 st.dataframe([
@@ -189,6 +190,7 @@ with st.sidebar:
                         "Startup": s.startup_name,
                         "Start": s.start,
                         "End": s.end,
+                        "Status": s.pitch_status,
                         "Verified": "yes" if s.verified else "NEEDS CHECK",
                     }
                     for s in summary["segments"]

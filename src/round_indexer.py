@@ -15,6 +15,8 @@ Spec: docs/superpowers/specs/2026-07-14-round-video-auto-indexing-design.md
 """
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
+from typing import Literal
 
 from google import genai
 from google.genai import types
@@ -39,11 +41,24 @@ SEGMENTER_ATTEMPTS = 2
 INDEXER_TEMPERATURE = 0.0
 INDEXER_SEED = 7524
 
+# Refinement/verification calls are independent per segment (each hits its
+# own clipped span) and carry no payload — the video is fetched server-side
+# from YouTube, so the inline-bytes concurrency hazard that bit the grading
+# Head's parallelization does not exist here. Bounded to stay well inside
+# the Vertex request-rate budget alongside any concurrently-running grading.
+INDEXER_CONCURRENCY = 3
+
 
 class RoundSegment(BaseModel):
     startup_name: str = Field(min_length=1)
     start: str = Field(min_length=3, description="Segment start, m:ss or h:mm:ss")
     end: str = Field(min_length=3, description="Segment end, m:ss or h:mm:ss")
+    # What actually happened at this startup's announced slot — a real
+    # distinction observed at live competitions: the host announces a
+    # startup and (a) they pitch, (b) nobody responds, or (c) they respond
+    # but can't continue (technical trouble, defer). Only "pitched" slots
+    # are gradeable; the other two are surfaced to the operator instead.
+    pitch_status: Literal["pitched", "announced_no_response", "aborted"] = "pitched"
     verified: bool = True
 
 
@@ -61,6 +76,21 @@ startup's segment starts when the emcee announces it (include the
 announcement) and ends when its Q&A finishes, just before the next
 announcement (or when the recording's closing remarks begin, for the last
 startup).
+
+When a startup is announced, one of three things happens — set
+pitch_status accordingly for each startup:
+- "pitched": the founders respond and deliver their pitch (the normal
+  case). The segment spans announcement -> end of their Q&A. If they
+  answer but ask/are told to pitch later, or an early attempt is
+  interrupted, and the startup returns LATER in the recording to pitch
+  properly, use ONLY the COMPLETED later pitch's span.
+- "announced_no_response": the host announces the startup but nobody
+  responds or appears, and the host moves on. The segment is just that
+  short announcement moment.
+- "aborted": the founders respond but cannot continue (technical
+  problems, they defer, something goes wrong) and never complete a pitch
+  anywhere in this recording. The segment spans whatever actually
+  happened at their slot.
 
 Startups to locate (use these EXACT names in your answer):
 {startup_names}
@@ -153,12 +183,17 @@ def _call_segment_verifier(youtube_url: str, start_s: int, end_s: int, model: st
 REFINE_WINDOW_SECONDS = 90
 
 REFINE_PROMPT = """
-In this clip from a startup-competition recording, a host announces the
-startup "{startup_name}" (their pitch begins right after the announcement).
-At what timestamp does that announcement begin? Answer with JSON:
-{{"announce_time": "<m:ss or h:mm:ss>"}}. If the announcement of
-"{startup_name}" does not occur anywhere in this clip, answer
-{{"announce_time": null}}.
+In this clip from a startup-competition recording, find the host
+announcement that starts the FULL gradeable pitch for startup
+"{startup_name}". If "{startup_name}" was announced earlier but the
+founders did not pitch then, ignore that earlier aborted/no-response
+announcement and use the later announcement where their actual pitch and
+Q&A begin.
+
+At what timestamp does the gradeable-pitch announcement begin? Answer with
+JSON: {{"announce_time": "<m:ss or h:mm:ss>"}}. If the gradeable-pitch
+announcement for "{startup_name}" does not occur anywhere in this clip,
+answer {{"announce_time": null}}.
 """.strip()
 
 
@@ -219,36 +254,65 @@ def index_round(youtube_url: str, startup_names: list[str], model: str) -> list[
     wrong (missing/extra startups, overlaps, implausible lengths).
     """
     proposal = _call_segmenter(youtube_url, startup_names, model)
+    # The segmenter sometimes returns segments in SHEET order rather than
+    # time order (confirmed live) — sort by start; names carry identity,
+    # list order is only presentation.
+    segments = sorted(proposal.segments, key=lambda s: parse_timestamp(s.start))
     triples = [
         (seg.startup_name, parse_timestamp(seg.start), parse_timestamp(seg.end))
-        for seg in proposal.segments
+        for seg in segments
     ]
-    validate_segments(triples, startup_names)
+    short_ok = frozenset(
+        seg.startup_name for seg in segments if seg.pitch_status != "pitched"
+    )
+    validate_segments(triples, startup_names, short_ok)
 
-    # Coarse-to-fine: pin each segment's start with a focused ±90s window
-    # call, then derive each end from the NEXT segment's refined start —
-    # the recording is contiguous (pitch -> Q&A -> next announcement), so
-    # ends carry no independent signal of their own. The last segment
-    # keeps its coarse end. Refinement is best-effort per boundary: a
-    # failed/out-of-window answer keeps the coarse value.
-    starts = []
-    for name, start_s, _ in triples:
+    # Coarse-to-fine: pin each PITCHED segment's start with a focused ±90s
+    # window call, then derive each end from the NEXT segment's refined
+    # start — the recording is contiguous (pitch -> Q&A -> next
+    # announcement), so ends carry no independent signal of their own. The
+    # last segment keeps its coarse end. Refinement is best-effort per
+    # boundary: a failed/out-of-window answer keeps the coarse value.
+    # Refinement and verification each run in a bounded thread pool — the
+    # per-segment calls are fully independent and payload-free (YouTube is
+    # fetched server-side), so parallelizing them is safe; see
+    # INDEXER_CONCURRENCY.
+    def _refined_start_for(i: int) -> int:
+        name, start_s, _ = triples[i]
+        if segments[i].pitch_status != "pitched":
+            return start_s
         refined = _refine_start(youtube_url, start_s, name, model)
-        starts.append(refined if refined is not None else start_s)
+        return refined if refined is not None else start_s
+
+    with ThreadPoolExecutor(max_workers=INDEXER_CONCURRENCY) as pool:
+        starts = list(pool.map(_refined_start_for, range(len(triples))))
     refined_triples = []
     for i, (name, _, end_s) in enumerate(triples):
         end = (starts[i + 1] - 1) if i + 1 < len(triples) else end_s
         refined_triples.append((name, starts[i], end))
-    validate_segments(refined_triples, startup_names)
+    validate_segments(refined_triples, startup_names, short_ok)
+
+    # Verify pitched segments only: a no-response/aborted slot's clip is
+    # mostly the announcement itself — flagging it NEEDS CHECK on top of
+    # its NO PITCH marker would be noise; the operator reviews it anyway.
+    def _verified_for(i: int) -> bool:
+        name, start_s, end_s = refined_triples[i]
+        if segments[i].pitch_status != "pitched":
+            return True
+        seen = _call_segment_verifier(youtube_url, start_s, end_s, model)
+        return _names_match(name, seen)
+
+    with ThreadPoolExecutor(max_workers=INDEXER_CONCURRENCY) as pool:
+        verified_flags = list(pool.map(_verified_for, range(len(refined_triples))))
 
     results: list[RoundSegment] = []
-    for name, start_s, end_s in refined_triples:
-        seen = _call_segment_verifier(youtube_url, start_s, end_s, model)
+    for i, (name, start_s, end_s) in enumerate(refined_triples):
         results.append(RoundSegment(
             startup_name=name,
             start=seconds_to_timestamp(start_s),
             end=seconds_to_timestamp(end_s),
-            verified=_names_match(name, seen),
+            pitch_status=segments[i].pitch_status,
+            verified=verified_flags[i],
         ))
     return results
 
@@ -309,8 +373,32 @@ def run_round_indexing(config, youtube_url: str) -> dict:
 
     sheet_name = config.sheet_range.split("!")[0].strip("'")
     needs_check = 0
+    no_pitch = 0
     for sheet_row_number, name in candidates:
         seg = by_name[name]
+        if seg.pitch_status != "pitched":
+            # Announced but no gradeable pitch happened (nobody responded,
+            # or the founders couldn't continue). Clear any stale Video URL
+            # and write an explicit non-timestamp marker; otherwise grading
+            # could fall back to feeding the FULL round recording to the
+            # analyst for this row. The operator decides what to do with the
+            # row (e.g. mark no-show).
+            no_pitch += 1
+            label = (
+                "no response" if seg.pitch_status == "announced_no_response"
+                else "aborted"
+            )
+            marker = f"NO PITCH ({label})"
+            _write_row_cells(
+                sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+                {
+                    "Video": "",
+                    SEGMENT_START_COLUMN: marker,
+                    SEGMENT_END_COLUMN: marker,
+                },
+                col_lookup,
+            )
+            continue
         prefix = "" if seg.verified else "NEEDS CHECK: "
         needs_check += 0 if seg.verified else 1
         _write_row_cells(
@@ -322,4 +410,9 @@ def run_round_indexing(config, youtube_url: str) -> dict:
             },
             col_lookup,
         )
-    return {"indexed": len(segments), "needs_check": needs_check, "segments": segments}
+    return {
+        "indexed": len(segments),
+        "needs_check": needs_check,
+        "no_pitch": no_pitch,
+        "segments": segments,
+    }

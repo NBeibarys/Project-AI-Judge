@@ -53,13 +53,22 @@ def seconds_to_timestamp(total: int) -> str:
 def validate_segments(
     segments: list[tuple[str, int, int]],
     expected_names: list[str],
+    short_ok_names: frozenset[str] = frozenset(),
 ) -> None:
     """Fail closed on any structural problem with a proposed segment list.
 
     segments: [(startup_name, start_seconds, end_seconds), ...] in video
-    order. expected_names: the sheet tab's startup names (no-shows already
-    excluded). Checks: exact name set match, end > start, plausible length,
-    strictly ordered and non-overlapping.
+    order (callers sort by start first — the segmenter sometimes returns
+    sheet order instead of time order, confirmed live). expected_names:
+    the sheet tab's startup names (no-shows already excluded). Checks:
+    exact name set match, end > start, plausible length, strictly ordered
+    and non-overlapping.
+
+    short_ok_names: startups exempt from the MINIMUM length check — an
+    announced-but-didn't-pitch slot (nobody responds, or the founder can't
+    continue) is legitimately just a 10-30s announcement span, not a
+    hallucinated boundary. The maximum-length and ordering checks still
+    apply to them.
     """
     got = [name for name, _, _ in segments]
     if sorted(got) != sorted(expected_names):
@@ -74,10 +83,11 @@ def validate_segments(
         if end <= start:
             raise SegmentValidationError(f"{name}: end ({end}s) <= start ({start}s)")
         length = end - start
-        if not MIN_SEGMENT_SECONDS <= length <= MAX_SEGMENT_SECONDS:
+        min_length = 1 if name in short_ok_names else MIN_SEGMENT_SECONDS
+        if not min_length <= length <= MAX_SEGMENT_SECONDS:
             raise SegmentValidationError(
                 f"{name}: implausible segment length {length}s "
-                f"(allowed {MIN_SEGMENT_SECONDS}-{MAX_SEGMENT_SECONDS}s)"
+                f"(allowed {min_length}-{MAX_SEGMENT_SECONDS}s)"
             )
         if start < previous_end:
             raise SegmentValidationError(
