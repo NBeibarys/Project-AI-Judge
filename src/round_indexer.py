@@ -26,6 +26,7 @@ from .round_segments import (
     SEGMENT_END_COLUMN,
     SEGMENT_START_COLUMN,
     parse_timestamp,
+    seconds_to_timestamp,
     validate_segments,
 )
 
@@ -149,6 +150,57 @@ def _call_segment_verifier(youtube_url: str, start_s: int, end_s: int, model: st
     return str(json.loads(response.text).get("startup_name", "")).strip()
 
 
+REFINE_WINDOW_SECONDS = 90
+
+REFINE_PROMPT = """
+In this clip from a startup-competition recording, a host announces the
+startup "{startup_name}" (their pitch begins right after the announcement).
+At what timestamp does that announcement begin? Answer with JSON:
+{{"announce_time": "<m:ss or h:mm:ss>"}}. If the announcement of
+"{startup_name}" does not occur anywhere in this clip, answer
+{{"announce_time": null}}.
+""".strip()
+
+
+def _refine_start(youtube_url: str, coarse_start_s: int, startup_name: str, model: str) -> int | None:
+    """Pin a segment's exact start with a focused window around the coarse one.
+
+    Coarse-to-fine: the hour-long segmenter pass localizes boundaries only
+    to within a minute or two (confirmed live — a startup's assigned start
+    landed 105s inside the previous startup's Q&A), while a focused ±90s
+    clip pins the announcement to the second. Clipped calls report
+    timestamps in the ORIGINAL video's timeline (confirmed live), so the
+    answer is validated by range — anything outside the shown window (or
+    unparseable) returns None and the coarse value stays.
+    """
+    window_start = max(0, coarse_start_s - REFINE_WINDOW_SECONDS)
+    window_end = coarse_start_s + REFINE_WINDOW_SECONDS
+    client = _client()
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=[types.Content(role="user", parts=[
+                _youtube_part(youtube_url, window_start, window_end),
+                types.Part(text=REFINE_PROMPT.format(startup_name=startup_name)),
+            ])],
+            config=types.GenerateContentConfig(
+                temperature=INDEXER_TEMPERATURE,
+                seed=INDEXER_SEED,
+                media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
+                response_mime_type="application/json",
+            ),
+        )
+        raw = json.loads(response.text).get("announce_time")
+        if not raw:
+            return None
+        refined = parse_timestamp(str(raw))
+    except Exception:  # noqa: BLE001 — refinement is best-effort, coarse stays
+        return None
+    if not window_start <= refined <= window_end:
+        return None
+    return refined
+
+
 def _names_match(expected: str, seen: str) -> bool:
     """Forgiving comparison: emcee pronunciation/casing/punctuation drift is
     normal; a genuinely different startup won't survive containment checks."""
@@ -173,14 +225,30 @@ def index_round(youtube_url: str, startup_names: list[str], model: str) -> list[
     ]
     validate_segments(triples, startup_names)
 
+    # Coarse-to-fine: pin each segment's start with a focused ±90s window
+    # call, then derive each end from the NEXT segment's refined start —
+    # the recording is contiguous (pitch -> Q&A -> next announcement), so
+    # ends carry no independent signal of their own. The last segment
+    # keeps its coarse end. Refinement is best-effort per boundary: a
+    # failed/out-of-window answer keeps the coarse value.
+    starts = []
+    for name, start_s, _ in triples:
+        refined = _refine_start(youtube_url, start_s, name, model)
+        starts.append(refined if refined is not None else start_s)
+    refined_triples = []
+    for i, (name, _, end_s) in enumerate(triples):
+        end = (starts[i + 1] - 1) if i + 1 < len(triples) else end_s
+        refined_triples.append((name, starts[i], end))
+    validate_segments(refined_triples, startup_names)
+
     results: list[RoundSegment] = []
-    for seg, (_, start_s, end_s) in zip(proposal.segments, triples):
+    for name, start_s, end_s in refined_triples:
         seen = _call_segment_verifier(youtube_url, start_s, end_s, model)
         results.append(RoundSegment(
-            startup_name=seg.startup_name,
-            start=seg.start,
-            end=seg.end,
-            verified=_names_match(seg.startup_name, seen),
+            startup_name=name,
+            start=seconds_to_timestamp(start_s),
+            end=seconds_to_timestamp(end_s),
+            verified=_names_match(name, seen),
         ))
     return results
 
