@@ -529,18 +529,18 @@ class R2BHeadScore(BaseModel):
 
 class R2BHeadScoreNamed(BaseModel):
     """Explicit head-scoring schema for the R2B rubric with concrete field names."""
-    Problem_Solution: int = Field(ge=1, le=10)
-    Market_Potential: int = Field(ge=1, le=10)
-    Product_MVP_Innovation: int = Field(ge=1, le=10)
-    Team_Strength: int = Field(ge=1, le=10)
-    Business_Model: int = Field(ge=1, le=10)
-    Presentation_Clarity: int = Field(ge=1, le=10)
     Problem_Solution_rationale: str = Field(min_length=1)
+    Problem_Solution: int = Field(ge=1, le=10)
     Market_Potential_rationale: str = Field(min_length=1)
+    Market_Potential: int = Field(ge=1, le=10)
     Product_MVP_Innovation_rationale: str = Field(min_length=1)
+    Product_MVP_Innovation: int = Field(ge=1, le=10)
     Team_Strength_rationale: str = Field(min_length=1)
+    Team_Strength: int = Field(ge=1, le=10)
     Business_Model_rationale: str = Field(min_length=1)
+    Business_Model: int = Field(ge=1, le=10)
     Presentation_Clarity_rationale: str = Field(min_length=1)
+    Presentation_Clarity: int = Field(ge=1, le=10)
     final_score: float = Field(ge=1, le=10)
     override: float = Field(default=0.0, ge=-1.0, le=1.0)
     override_reasoning: str = ""
