@@ -100,7 +100,14 @@ def _call_segmenter(youtube_url: str, startup_names: list[str], model: str) -> R
     last_exc: Exception | None = None
     for attempt in range(SEGMENTER_ATTEMPTS):
         try:
-            response = _client().models.generate_content(
+            # The client MUST be held in a local for the call's duration:
+            # `_client().models.generate_content(...)` frees the Client
+            # temporary right after `.models` is read (CPython refcount),
+            # which closes its underlying HTTP session — every request then
+            # fails with "Cannot send a request, as the client has been
+            # closed" (confirmed live on the first real app run).
+            client = _client()
+            response = client.models.generate_content(
                 model=model,
                 contents=[types.Content(role="user", parts=[
                     _youtube_part(youtube_url),
@@ -124,7 +131,9 @@ def _call_segmenter(youtube_url: str, startup_names: list[str], model: str) -> R
 
 def _call_segment_verifier(youtube_url: str, start_s: int, end_s: int, model: str) -> str:
     """Return the startup name the verifier sees pitching in this span."""
-    response = _client().models.generate_content(
+    # Held in a local, same as _call_segmenter — see the comment there.
+    client = _client()
+    response = client.models.generate_content(
         model=model,
         contents=[types.Content(role="user", parts=[
             _youtube_part(youtube_url, start_s, end_s),
