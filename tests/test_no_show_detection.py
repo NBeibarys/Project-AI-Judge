@@ -11,6 +11,7 @@ class NoShowDetectionTests(unittest.TestCase):
             "Alpha no-response",
             "Alpha no_response",
             "Alpha NO.RESPONSE",
+            "Alpha not pitching",
         ):
             with self.subTest(startup_name=startup_name):
                 self.assertTrue(_is_no_show(startup_name))

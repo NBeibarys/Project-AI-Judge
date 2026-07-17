@@ -64,6 +64,7 @@ def _normalize_for_match(text: str) -> str:
 # stripped) name — these rows are skipped entirely before any LLM call.
 _NO_SHOW_MARKERS = (
     "no response",
+    "not pitching",
     "won't pitch",
     "wont pitch",
     "didn't respond",
