@@ -332,29 +332,46 @@ def _validate_direct_video(
     )
 
 
-def _is_native_youtube_video(url: str) -> bool:
-    """Identify public YouTube video shapes supported natively by Gemini."""
-
+def _youtube_video_id(url: str) -> str | None:
+    """Extract a video ID from public YouTube shapes supported by Gemini."""
     parsed = urlparse(url)
     host = (parsed.hostname or "").rstrip(".").lower()
     path = [part for part in parsed.path.split("/") if part]
     if host == "youtu.be":
-        return len(path) == 1 and bool(YOUTUBE_VIDEO_ID.fullmatch(path[0]))
+        if len(path) == 1 and YOUTUBE_VIDEO_ID.fullmatch(path[0]):
+            return path[0]
+        return None
     if host not in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
-        return False
+        return None
     if parsed.path == "/watch":
         video_ids = parse_qs(
             parsed.query,
             keep_blank_values=True,
         ).get("v", [])
-        return len(video_ids) == 1 and bool(
-            YOUTUBE_VIDEO_ID.fullmatch(video_ids[0])
-        )
-    return (
+        if len(video_ids) == 1 and YOUTUBE_VIDEO_ID.fullmatch(video_ids[0]):
+            return video_ids[0]
+        return None
+    if (
         len(path) == 2
         and path[0] in {"shorts", "embed", "live"}
-        and bool(YOUTUBE_VIDEO_ID.fullmatch(path[1]))
-    )
+        and YOUTUBE_VIDEO_ID.fullmatch(path[1])
+    ):
+        return path[1]
+    return None
+
+
+def canonicalize_youtube_url(url: str) -> str:
+    """Strip query noise that can make Gemini reject an otherwise valid video."""
+    submitted_url = (url or "").strip()
+    video_id = _youtube_video_id(submitted_url)
+    if video_id is None:
+        return submitted_url
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
+def _is_native_youtube_video(url: str) -> bool:
+    """Identify public YouTube video shapes supported natively by Gemini."""
+    return _youtube_video_id(url) is not None
 
 
 def resolve_video_url(
@@ -367,8 +384,14 @@ def resolve_video_url(
     submitted_url = (url or "").strip()
     _public_https_host(submitted_url)
     if _is_native_youtube_video(submitted_url):
-        # Google's native YouTube input explicitly omits MIME.
-        return ResolvedVideo(submitted_url, None, "youtube")
+        # Google's native YouTube input explicitly omits MIME. Query noise is
+        # removed because a dangling timestamp (for example, trailing ``&t``)
+        # makes Vertex report LOGIN_REQUIRED even though the video is public.
+        return ResolvedVideo(
+            canonicalize_youtube_url(submitted_url),
+            None,
+            "youtube",
+        )
 
     page_or_media = metadata_fetcher(submitted_url)
     direct = _validate_direct_video(page_or_media)

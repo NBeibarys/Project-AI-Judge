@@ -73,11 +73,18 @@ _NO_SHOW_MARKERS = (
     "didnt come",
     "did not come",
 )
+_NO_SHOW_COMPACT_MARKERS = tuple(
+    re.sub(r"[^a-z0-9]+", "", marker) for marker in _NO_SHOW_MARKERS
+)
 
 
 def _is_no_show(startup_name: str) -> bool:
     name = _normalize_for_match(startup_name)
-    return any(marker in name for marker in _NO_SHOW_MARKERS)
+    compact_name = re.sub(r"[^a-z0-9]+", "", name)
+    return (
+        any(marker in name for marker in _NO_SHOW_MARKERS)
+        or any(marker in compact_name for marker in _NO_SHOW_COMPACT_MARKERS)
+    )
 
 
 def _find_duplicate_emails(header: list, rows: list) -> frozenset:

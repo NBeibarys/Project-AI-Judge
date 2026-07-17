@@ -27,6 +27,7 @@ from .round_segments import (
     parse_timestamp,
     validate_segments,
 )
+from .video_urls import canonicalize_youtube_url
 
 # One retry after a short pause for the big segmenter call — a single
 # transient failure on an hour-long-video call shouldn't force the operator
@@ -501,6 +502,7 @@ def run_round_indexing(config, youtube_url: str) -> dict:
     Fails loudly if the operator hasn't added the two segment columns or a
     Startup Name/Video column is missing.
     """
+    youtube_url = canonicalize_youtube_url(youtube_url)
     sheets_service = get_sheets_service(config.service_account_path)
     header, rows = read_sheet_rows(
         sheets_service, config.sheet_id, config.sheet_range, config.header_row,

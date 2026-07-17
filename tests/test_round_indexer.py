@@ -283,6 +283,37 @@ class RunRoundIndexingTests(unittest.TestCase):
     @patch("src.round_indexer._write_round_cells")
     @patch("src.round_indexer.read_sheet_rows")
     @patch("src.round_indexer.get_sheets_service")
+    def test_canonicalizes_youtube_url_before_analysis_and_writing(
+        self, mock_service, mock_read, mock_write, mock_index,
+    ) -> None:
+        mock_read.return_value = (
+            ["Startup Name", "Video", "Segment Start", "Segment End"],
+            [["Alpha", "", "", ""]],
+        )
+        mock_index.return_value = [
+            RoundSegment(startup_name="Alpha", start="3:00", end="9:30"),
+        ]
+        config = MagicMock()
+        config.header_row = 2
+        config.analyzer_model = "analyst-m"
+        config.grader_model = "verifier-m"
+        config.head_model = "writer-m"
+        config.sheet_range = "AI"
+
+        run_round_indexing(
+            config,
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t",
+        )
+
+        canonical_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        self.assertEqual(mock_index.call_args.args[0], canonical_url)
+        written = dict(mock_write.call_args.args[3])
+        self.assertEqual(written[3]["Video"], canonical_url)
+
+    @patch("src.round_indexer.index_round")
+    @patch("src.round_indexer._write_round_cells")
+    @patch("src.round_indexer.read_sheet_rows")
+    @patch("src.round_indexer.get_sheets_service")
     def test_technical_failure_writes_nothing(
         self, mock_service, mock_read, mock_write, mock_index,
     ) -> None:
