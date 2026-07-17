@@ -115,6 +115,17 @@ def _find_name_column_index(header: list) -> int | None:
     return None
 
 
+def _segment_needs_human_review(header: list, row: list) -> bool:
+    """True when indexing exhausted its review loop for this row."""
+    lookup = {col.strip().lower(): i for i, col in enumerate(header)}
+    for column in (SEGMENT_START_COLUMN, SEGMENT_END_COLUMN):
+        index = lookup.get(column.lower())
+        value = row[index].strip() if index is not None and index < len(row) else ""
+        if value.upper().startswith("NEEDS HUMAN REVIEW:"):
+            return True
+    return False
+
+
 def _read_segment_bounds(header: list, row: list) -> tuple[int, int] | None:
     """(start_s, end_s) from the row's segment cells, or None.
 
@@ -326,6 +337,10 @@ def process_row(
     row_id = _derive_row_id(header, row, sheet_row_number, duplicate_emails)
     if checkpoint.is_done(row_id) and not force:
         return row_id, None  # already graded in a prior run, nothing to write
+    if _segment_needs_human_review(header, row):
+        # The indexer deliberately left this row unresolved. Do not fall back
+        # to grading the full round video; a human must correct the boundaries.
+        return row_id, None
 
     for i, col in enumerate(header):
         if _normalize_for_match(col) in ("startup name", "company name", "team name"):

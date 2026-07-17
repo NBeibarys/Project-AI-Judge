@@ -1,180 +1,378 @@
 import unittest
-from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 
+from google.genai import types
+
 from src.round_indexer import (
+    INDEXER_CONCURRENCY,
     RoundSegment,
     RoundSegmentList,
+    SegmentVerification,
+    _call_round_revision,
+    _call_segmenter,
+    _call_segment_verifier,
+    _call_writer,
+    _write_round_cells,
     index_round,
     run_round_indexing,
 )
 from src.round_segments import SegmentValidationError
 
 
-def _fake_llm_segments() -> RoundSegmentList:
+def _fake_segments() -> RoundSegmentList:
     return RoundSegmentList(segments=[
         RoundSegment(startup_name="Alpha", start="3:00", end="9:30"),
         RoundSegment(startup_name="Beta", start="9:40", end="16:00"),
     ])
 
 
-def _verifier_by_start(mapping: dict[int, str]) -> Callable[[str, int, int, str], str]:
-    """Refinement/verification run in a thread pool — mock side_effect
-    LISTS are consumed in racy order there, so key fakes by call args."""
-    def fake(url: str, start_s: int, end_s: int, model: str) -> str:
-        return mapping[start_s]
-    return fake
+def _approved(segment: RoundSegment) -> SegmentVerification:
+    return SegmentVerification(
+        startup_name_seen=segment.startup_name,
+        pitch_status_seen=segment.pitch_status,
+        start_precise=True,
+        end_precise=True,
+        approved=True,
+    )
+
+
+def _rejected(segment: RoundSegment) -> SegmentVerification:
+    return SegmentVerification(
+        startup_name_seen=segment.startup_name,
+        pitch_status_seen=segment.pitch_status,
+        start_precise=False,
+        end_precise=False,
+        approved=False,
+        feedback="Correct both boundaries.",
+    )
 
 
 class IndexRoundTests(unittest.TestCase):
-    @patch("src.round_indexer._refine_start", return_value=None)
+    @patch("src.round_indexer._call_writer")
+    @patch("src.round_indexer._call_round_revision")
     @patch("src.round_indexer._call_segment_verifier")
     @patch("src.round_indexer._call_segmenter")
-    def test_happy_path_returns_verified_segments(self, mock_seg, mock_verify, mock_refine) -> None:
-        mock_seg.return_value = _fake_llm_segments()
-        mock_verify.side_effect = _verifier_by_start({180: "Alpha", 580: "Beta"})
+    def test_one_full_analyst_sequential_verification_and_one_writer(
+        self, mock_segmenter, mock_verifier, mock_revision, mock_writer,
+    ) -> None:
+        mock_segmenter.return_value = _fake_segments()
+        mock_verifier.side_effect = lambda url, segment, model: _approved(segment)
+        mock_writer.side_effect = lambda segments, model: segments
+
         result = index_round(
-            "https://youtube.com/watch?v=x", ["Alpha", "Beta"], model="m",
+            "https://youtube.com/watch?v=x",
+            ["Alpha", "Beta"],
+            analyst_model="analyst-m",
+            verifier_model="verifier-m",
+            writer_model="writer-m",
         )
-        # Ends derive from the NEXT segment's start minus 1s (contiguous
-        # recording); the last segment keeps its coarse end.
+
+        self.assertEqual(INDEXER_CONCURRENCY, 1)
+        mock_segmenter.assert_called_once_with(
+            "https://youtube.com/watch?v=x", ["Alpha", "Beta"], "analyst-m",
+        )
+        self.assertEqual(mock_verifier.call_count, 2)
+        mock_revision.assert_not_called()
+        mock_writer.assert_called_once()
+        self.assertEqual(mock_writer.call_args.args[1], "writer-m")
+        self.assertTrue(all(segment.verified for segment in result))
+
+    @patch("src.round_indexer._call_writer")
+    @patch("src.round_indexer._call_round_revision")
+    @patch("src.round_indexer._call_segment_verifier")
+    @patch("src.round_indexer._call_segmenter")
+    def test_all_rejected_feedback_uses_one_global_analyst_revision(
+        self, mock_segmenter, mock_verifier, mock_revision, mock_writer,
+    ) -> None:
+        original = _fake_segments().segments
+        revised = [
+            RoundSegment(startup_name="Alpha", start="3:12", end="9:35"),
+            RoundSegment(startup_name="Beta", start="9:45", end="16:10"),
+        ]
+        mock_segmenter.return_value = RoundSegmentList(segments=original)
+        mock_verifier.side_effect = (
+            lambda url, segment, model:
+            _rejected(segment) if segment.start in {"3:00", "9:40"} else _approved(segment)
+        )
+        mock_revision.return_value = revised
+        mock_writer.side_effect = lambda segments, model: segments
+
+        result = index_round(
+            "https://youtube.com/watch?v=x",
+            ["Alpha", "Beta"],
+            analyst_model="analyst-m",
+            verifier_model="verifier-m",
+            writer_model="writer-m",
+        )
+
+        mock_revision.assert_called_once()
         self.assertEqual(
-            [(r.startup_name, r.start, r.end, r.verified) for r in result],
-            [("Alpha", "3:00", "9:39", True), ("Beta", "9:40", "16:00", True)],
+            set(mock_revision.call_args.args[2]),
+            {"Alpha", "Beta"},
         )
+        self.assertEqual(mock_revision.call_args.args[3], "analyst-m")
+        self.assertEqual(mock_verifier.call_count, 4)
+        self.assertEqual([segment.start for segment in result], ["3:12", "9:45"])
+        self.assertTrue(all(segment.verified for segment in result))
 
-    @patch("src.round_indexer._refine_start", return_value=None)
+    @patch("src.round_indexer._call_writer")
+    @patch("src.round_indexer._call_round_revision")
     @patch("src.round_indexer._call_segment_verifier")
     @patch("src.round_indexer._call_segmenter")
-    def test_verifier_mismatch_marks_unverified(self, mock_seg, mock_verify, mock_refine) -> None:
-        mock_seg.return_value = _fake_llm_segments()
-        mock_verify.side_effect = _verifier_by_start({180: "Alpha", 580: "Gamma"})
+    def test_third_rejection_becomes_human_review_and_still_reaches_writer(
+        self, mock_segmenter, mock_verifier, mock_revision, mock_writer,
+    ) -> None:
+        segment = RoundSegment(startup_name="Alpha", start="3:00", end="9:30")
+        mock_segmenter.return_value = RoundSegmentList(segments=[segment])
+        mock_verifier.side_effect = lambda url, current, model: _rejected(current)
+        mock_revision.return_value = [segment]
+        mock_writer.side_effect = lambda segments, model: segments
+
         result = index_round(
-            "https://youtube.com/watch?v=x", ["Alpha", "Beta"], model="m",
+            "https://youtube.com/watch?v=x",
+            ["Alpha"],
+            analyst_model="analyst-m",
+            verifier_model="verifier-m",
+            writer_model="writer-m",
         )
-        self.assertTrue(result[0].verified)
-        self.assertFalse(result[1].verified)
 
-    @patch("src.round_indexer._refine_start")
+        self.assertEqual(mock_verifier.call_count, 3)
+        self.assertEqual(mock_revision.call_count, 2)
+        mock_writer.assert_called_once()
+        self.assertFalse(result[0].verified)
+
+    @patch("src.round_indexer._call_writer")
+    @patch("src.round_indexer._call_round_revision")
     @patch("src.round_indexer._call_segment_verifier")
     @patch("src.round_indexer._call_segmenter")
-    def test_refined_starts_shift_boundaries(self, mock_seg, mock_verify, mock_refine) -> None:
-        mock_seg.return_value = _fake_llm_segments()
-        # Alpha's start pinned 10s later; Beta's pinned 20s later — Alpha's
-        # end must follow Beta's REFINED start, not the coarse one. Keyed
-        # by startup name (thread pool order is not deterministic).
-        mock_refine.side_effect = (
-            lambda url, coarse_s, name, model: {"Alpha": 190, "Beta": 600}[name]
+    def test_no_pitch_status_is_also_verified(
+        self, mock_segmenter, mock_verifier, mock_revision, mock_writer,
+    ) -> None:
+        segment = RoundSegment(
+            startup_name="Alpha",
+            start="3:00",
+            end="3:20",
+            pitch_status="announced_no_response",
         )
-        mock_verify.side_effect = _verifier_by_start({190: "Alpha", 600: "Beta"})
+        mock_segmenter.return_value = RoundSegmentList(segments=[segment])
+        mock_verifier.return_value = _approved(segment)
+        mock_writer.side_effect = lambda segments, model: segments
+
         result = index_round(
-            "https://youtube.com/watch?v=x", ["Alpha", "Beta"], model="m",
-        )
-        self.assertEqual(
-            [(r.startup_name, r.start, r.end) for r in result],
-            [("Alpha", "3:10", "9:59"), ("Beta", "10:00", "16:00")],
+            "https://youtube.com/watch?v=x", ["Alpha"], analyst_model="m",
         )
 
-    @patch("src.round_indexer._refine_start", return_value=None)
+        mock_verifier.assert_called_once()
+        mock_revision.assert_not_called()
+        self.assertEqual(result[0].pitch_status, "announced_no_response")
+
+    @patch("src.round_indexer._call_writer")
     @patch("src.round_indexer._call_segment_verifier")
     @patch("src.round_indexer._call_segmenter")
-    def test_sheet_order_output_is_sorted_by_time(self, mock_seg, mock_verify, mock_refine) -> None:
-        # The segmenter sometimes returns segments in sheet order rather
-        # than time order (confirmed live) — index_round must sort instead
-        # of failing the overlap check.
-        mock_seg.return_value = RoundSegmentList(segments=[
-            RoundSegment(startup_name="Beta", start="9:40", end="16:00"),
+    def test_structural_failure_stops_before_verification(
+        self, mock_segmenter, mock_verifier, mock_writer,
+    ) -> None:
+        mock_segmenter.return_value = RoundSegmentList(segments=[
             RoundSegment(startup_name="Alpha", start="3:00", end="9:30"),
         ])
-        mock_verify.side_effect = _verifier_by_start({180: "Alpha", 580: "Beta"})
-        result = index_round(
-            "https://youtube.com/watch?v=x", ["Alpha", "Beta"], model="m",
-        )
-        self.assertEqual([r.startup_name for r in result], ["Alpha", "Beta"])
 
-    @patch("src.round_indexer._refine_start")
-    @patch("src.round_indexer._call_segment_verifier")
-    @patch("src.round_indexer._call_segmenter")
-    def test_no_pitch_slot_skips_refinement_and_verification(self, mock_seg, mock_verify, mock_refine) -> None:
-        # An announced-but-no-response slot is legitimately short (below
-        # the normal 60s minimum), is never refined or verified, and keeps
-        # its status on the result.
-        mock_seg.return_value = RoundSegmentList(segments=[
-            RoundSegment(startup_name="Alpha", start="3:00", end="9:30"),
-            RoundSegment(startup_name="Beta", start="9:40", end="10:00",
-                         pitch_status="announced_no_response"),
-        ])
-        mock_refine.side_effect = (
-            lambda url, coarse_s, name, model: {"Alpha": 180}[name]
-        )
-        mock_verify.side_effect = _verifier_by_start({180: "Alpha"})
-        result = index_round(
-            "https://youtube.com/watch?v=x", ["Alpha", "Beta"], model="m",
-        )
-        self.assertEqual(result[1].pitch_status, "announced_no_response")
-        self.assertTrue(result[1].verified)
-        mock_refine.assert_called_once()
-        mock_verify.assert_called_once()
-
-    @patch("src.round_indexer._call_segmenter")
-    def test_structural_failure_raises(self, mock_seg) -> None:
-        mock_seg.return_value = RoundSegmentList(segments=[
-            RoundSegment(startup_name="Alpha", start="3:00", end="9:30"),
-        ])  # Beta missing
         with self.assertRaises(SegmentValidationError):
-            index_round("https://youtube.com/watch?v=x", ["Alpha", "Beta"], model="m")
+            index_round(
+                "https://youtube.com/watch?v=x",
+                ["Alpha", "Beta"],
+                analyst_model="m",
+            )
+
+        mock_verifier.assert_not_called()
+        mock_writer.assert_not_called()
+
+    @patch("src.round_indexer._client")
+    def test_analysts_and_verifier_use_high_writer_uses_low(self, mock_client) -> None:
+        model_api = mock_client.return_value.models.generate_content
+        segments = _fake_segments().segments
+
+        model_api.return_value.text = RoundSegmentList(segments=segments).model_dump_json()
+        _call_segmenter(
+            "https://youtube.com/watch?v=x", ["Alpha", "Beta"], "m",
+        )
+        initial_analyst_config = model_api.call_args.kwargs["config"]
+
+        model_api.return_value.text = RoundSegmentList(segments=segments).model_dump_json()
+        _call_round_revision(
+            "https://youtube.com/watch?v=x",
+            segments,
+            {"Alpha": "Fix boundaries."},
+            "m",
+        )
+        revision_analyst_config = model_api.call_args.kwargs["config"]
+
+        segment = segments[0]
+        model_api.return_value.text = _approved(segment).model_dump_json()
+        _call_segment_verifier("https://youtube.com/watch?v=x", segment, "m")
+        verifier_config = model_api.call_args.kwargs["config"]
+
+        model_api.return_value.text = RoundSegmentList(segments=[segment]).model_dump_json()
+        _call_writer([segment], "m")
+        writer_config = model_api.call_args.kwargs["config"]
+
+        for config in (initial_analyst_config, revision_analyst_config, verifier_config):
+            self.assertEqual(
+                config.thinking_config.thinking_level,
+                types.ThinkingLevel.HIGH,
+            )
+        self.assertEqual(
+            writer_config.thinking_config.thinking_level,
+            types.ThinkingLevel.LOW,
+        )
+        for config in (
+            initial_analyst_config,
+            revision_analyst_config,
+            verifier_config,
+            writer_config,
+        ):
+            self.assertEqual(
+                config.media_resolution,
+                types.MediaResolution.MEDIA_RESOLUTION_LOW,
+            )
 
 
 class RunRoundIndexingTests(unittest.TestCase):
     @patch("src.round_indexer.index_round")
-    @patch("src.round_indexer._write_row_cells")
+    @patch("src.round_indexer._write_round_cells")
     @patch("src.round_indexer.read_sheet_rows")
     @patch("src.round_indexer.get_sheets_service")
-    def test_writes_segments_and_video_url(
-        self, mock_svc, mock_read, mock_write, mock_index,
+    def test_writes_all_rows_in_one_final_batch(
+        self, mock_service, mock_read, mock_write, mock_index,
     ) -> None:
-        header = ["Startup Name", "Video", "Segment Start", "Segment End"]
-        rows = [["Alpha", "", "", ""], ["Beta - didn't respond", "", "", ""], ["Gamma", "", "", ""]]
-        mock_read.return_value = (header, rows)
+        mock_read.return_value = (
+            ["Startup Name", "Video", "Segment Start", "Segment End"],
+            [
+                ["Alpha", "", "", ""],
+                ["Beta - didn't respond", "", "", ""],
+                ["Gamma", "", "", ""],
+            ],
+        )
         mock_index.return_value = [
-            RoundSegment(startup_name="Alpha", start="3:00", end="9:30", verified=True),
-            RoundSegment(startup_name="Gamma", start="9:40", end="16:00", verified=False),
+            RoundSegment(startup_name="Alpha", start="3:00", end="9:30"),
+            RoundSegment(startup_name="Gamma", start="9:40", end="16:00"),
         ]
         config = MagicMock()
         config.header_row = 2
-        config.analyzer_model = "m"
+        config.analyzer_model = "analyst-m"
+        config.grader_model = "verifier-m"
+        config.head_model = "writer-m"
         config.sheet_range = "AI"
+
         summary = run_round_indexing(config, "https://youtube.com/watch?v=x")
 
-        # no-show row excluded from indexing input
-        mock_index.assert_called_once()
-        self.assertEqual(mock_index.call_args[0][1], ["Alpha", "Gamma"])
-        # Alpha (sheet row 3): url + clean timestamps
-        # Gamma (sheet row 5): NEEDS CHECK marker on unverified segment
-        written = {call.args[3]: call.args[4] for call in mock_write.call_args_list}
-        self.assertEqual(
-            written[3],
-            {"Video": "https://youtube.com/watch?v=x", "Segment Start": "3:00", "Segment End": "9:30"},
+        mock_index.assert_called_once_with(
+            "https://youtube.com/watch?v=x",
+            ["Alpha", "Gamma"],
+            analyst_model="analyst-m",
+            verifier_model="verifier-m",
+            writer_model="writer-m",
         )
-        self.assertEqual(
-            written[5],
-            {"Video": "https://youtube.com/watch?v=x",
-             "Segment Start": "NEEDS CHECK: 9:40", "Segment End": "NEEDS CHECK: 16:00"},
-        )
+        mock_write.assert_called_once()
+        written = dict(mock_write.call_args.args[3])
+        self.assertEqual(written[3]["Segment Start"], "3:00")
+        self.assertEqual(written[5]["Segment End"], "16:00")
         self.assertEqual(summary["indexed"], 2)
+        self.assertEqual(summary["needs_check"], 0)
+
+    @patch("src.round_indexer.index_round")
+    @patch("src.round_indexer._write_round_cells")
+    @patch("src.round_indexer.read_sheet_rows")
+    @patch("src.round_indexer.get_sheets_service")
+    def test_technical_failure_writes_nothing(
+        self, mock_service, mock_read, mock_write, mock_index,
+    ) -> None:
+        mock_read.return_value = (
+            ["Startup Name", "Video", "Segment Start", "Segment End"],
+            [["Alpha", "", "", ""]],
+        )
+        mock_index.side_effect = RuntimeError("model unavailable")
+        config = MagicMock()
+        config.header_row = 2
+        config.sheet_range = "AI"
+
+        with self.assertRaisesRegex(RuntimeError, "model unavailable"):
+            run_round_indexing(config, "https://youtube.com/watch?v=x")
+
+        mock_write.assert_not_called()
+
+    @patch("src.round_indexer.index_round")
+    @patch("src.round_indexer._write_round_cells")
+    @patch("src.round_indexer.read_sheet_rows")
+    @patch("src.round_indexer.get_sheets_service")
+    def test_unresolved_row_writes_human_review_marker(
+        self, mock_service, mock_read, mock_write, mock_index,
+    ) -> None:
+        mock_read.return_value = (
+            ["Startup Name", "Video", "Segment Start", "Segment End"],
+            [["Alpha", "", "", ""]],
+        )
+        mock_index.return_value = [
+            RoundSegment(
+                startup_name="Alpha",
+                start="3:00",
+                end="9:30",
+                verified=False,
+            ),
+        ]
+        config = MagicMock()
+        config.header_row = 2
+        config.sheet_range = "AI"
+
+        summary = run_round_indexing(config, "https://youtube.com/watch?v=x")
+
+        written = dict(mock_write.call_args.args[3])
+        self.assertEqual(written[3]["Segment Start"], "NEEDS HUMAN REVIEW: 3:00")
+        self.assertEqual(written[3]["Segment End"], "NEEDS HUMAN REVIEW: 9:30")
+        self.assertEqual(summary["needs_check"], 1)
+
+    @patch("src.round_indexer.index_round")
+    @patch("src.round_indexer._write_round_cells")
+    @patch("src.round_indexer.read_sheet_rows")
+    @patch("src.round_indexer.get_sheets_service")
+    def test_unresolved_no_pitch_also_writes_human_review_marker(
+        self, mock_service, mock_read, mock_write, mock_index,
+    ) -> None:
+        mock_read.return_value = (
+            ["Startup Name", "Video", "Segment Start", "Segment End"],
+            [["Alpha", "old-url", "1:00", "5:00"]],
+        )
+        mock_index.return_value = [
+            RoundSegment(
+                startup_name="Alpha",
+                start="3:00",
+                end="3:20",
+                pitch_status="announced_no_response",
+                verified=False,
+            ),
+        ]
+        config = MagicMock()
+        config.header_row = 2
+        config.sheet_range = "AI"
+
+        summary = run_round_indexing(config, "https://youtube.com/watch?v=x")
+
+        written = dict(mock_write.call_args.args[3])
+        self.assertEqual(written[3]["Segment Start"], "NEEDS HUMAN REVIEW: 3:00")
+        self.assertEqual(written[3]["Video"], "https://youtube.com/watch?v=x")
         self.assertEqual(summary["needs_check"], 1)
         self.assertEqual(summary["no_pitch"], 0)
 
     @patch("src.round_indexer.index_round")
-    @patch("src.round_indexer._write_row_cells")
+    @patch("src.round_indexer._write_round_cells")
     @patch("src.round_indexer.read_sheet_rows")
     @patch("src.round_indexer.get_sheets_service")
-    def test_no_pitch_writes_no_frame_marker_and_clears_video(
-        self, mock_svc, mock_read, mock_write, mock_index,
+    def test_approved_no_pitch_writes_marker_and_clears_video(
+        self, mock_service, mock_read, mock_write, mock_index,
     ) -> None:
-        header = ["Startup Name", "Video", "Segment Start", "Segment End"]
-        rows = [["Alpha", "https://youtube.com/watch?v=old", "1:00", "5:00"]]
-        mock_read.return_value = (header, rows)
+        mock_read.return_value = (
+            ["Startup Name", "Video", "Segment Start", "Segment End"],
+            [["Alpha", "old-url", "1:00", "5:00"]],
+        )
         mock_index.return_value = [
             RoundSegment(
                 startup_name="Alpha",
@@ -185,58 +383,42 @@ class RunRoundIndexingTests(unittest.TestCase):
         ]
         config = MagicMock()
         config.header_row = 2
-        config.analyzer_model = "m"
         config.sheet_range = "AI"
 
         summary = run_round_indexing(config, "https://youtube.com/watch?v=x")
 
-        mock_write.assert_called_once()
+        written = dict(mock_write.call_args.args[3])
         self.assertEqual(
-            mock_write.call_args.args[4],
+            written[3],
             {
                 "Video": "",
                 "Segment Start": "NO PITCH (no response)",
                 "Segment End": "NO PITCH (no response)",
             },
         )
-        self.assertEqual(summary["indexed"], 1)
-        self.assertEqual(summary["needs_check"], 0)
         self.assertEqual(summary["no_pitch"], 1)
 
-    @patch("src.round_indexer.index_round")
-    @patch("src.round_indexer._write_row_cells")
-    @patch("src.round_indexer.read_sheet_rows")
-    @patch("src.round_indexer.get_sheets_service")
-    def test_aborted_slot_writes_no_frame_marker(
-        self, mock_svc, mock_read, mock_write, mock_index,
-    ) -> None:
-        header = ["Startup Name", "Video", "Segment Start", "Segment End"]
-        rows = [["Alpha", "https://youtube.com/watch?v=old", "1:00", "5:00"]]
-        mock_read.return_value = (header, rows)
-        mock_index.return_value = [
-            RoundSegment(
-                startup_name="Alpha",
-                start="3:00",
-                end="3:45",
-                pitch_status="aborted",
-            ),
-        ]
-        config = MagicMock()
-        config.header_row = 2
-        config.analyzer_model = "m"
-        config.sheet_range = "AI"
+    def test_round_cells_use_one_sheets_batch_request(self) -> None:
+        sheets_service = MagicMock()
+        values_service = sheets_service.spreadsheets.return_value.values.return_value
+        request = values_service.batchUpdate.return_value
 
-        summary = run_round_indexing(config, "https://youtube.com/watch?v=x")
-
-        self.assertEqual(
-            mock_write.call_args.args[4],
-            {
-                "Video": "",
-                "Segment Start": "NO PITCH (aborted)",
-                "Segment End": "NO PITCH (aborted)",
-            },
+        _write_round_cells(
+            sheets_service,
+            "sheet-id",
+            "AI",
+            [
+                (3, {"Video": "url", "Segment Start": "1:00", "Segment End": "4:00"}),
+                (4, {"Video": "url", "Segment Start": "4:01", "Segment End": "8:00"}),
+            ],
+            {"video": 1, "segment start": 2, "segment end": 3},
         )
-        self.assertEqual(summary["no_pitch"], 1)
+
+        values_service.batchUpdate.assert_called_once()
+        body = values_service.batchUpdate.call_args.kwargs["body"]
+        self.assertEqual(body["valueInputOption"], "RAW")
+        self.assertEqual(len(body["data"]), 6)
+        request.execute.assert_called_once_with(num_retries=5)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 import unittest
 
-from src.pipeline import _read_segment_bounds
+from src.pipeline import _read_segment_bounds, _segment_needs_human_review
 from src.round_segments import (
     SegmentValidationError,
     parse_timestamp,
@@ -86,6 +86,16 @@ class ReadSegmentBoundsTests(unittest.TestCase):
 
     def test_needs_check_marker_means_no_segment(self) -> None:
         row = ["Alpha", "url", "NEEDS CHECK: 3:12", "NEEDS CHECK: 9:48"]
+        self.assertIsNone(_read_segment_bounds(self.HEADER, row))
+
+    def test_human_review_marker_blocks_full_video_fallback(self) -> None:
+        row = [
+            "Alpha",
+            "url",
+            "NEEDS HUMAN REVIEW: 3:12",
+            "NEEDS HUMAN REVIEW: 9:48",
+        ]
+        self.assertTrue(_segment_needs_human_review(self.HEADER, row))
         self.assertIsNone(_read_segment_bounds(self.HEADER, row))
 
     def test_malformed_cells_mean_no_segment(self) -> None:
