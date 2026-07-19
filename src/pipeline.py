@@ -244,7 +244,7 @@ def _submitted_video_url(header: list, row: list) -> str:
 # Hosts that the Tier-1 resolver cannot fetch directly (Drive serves an HTML
 # interstitial or requires auth, so resolve_video_url returns a webpage with
 # requires_url_context=True). These must go through Tier-2 (Drive API download
-# → GCS upload) so the analyst receives the video as a native multimodal Part.
+# → Gemini Files API upload) so the analyst receives the video as a native multimodal Part.
 _DRIVE_HOSTS = frozenset({"drive.google.com", "drive.usercontent.google.com"})
 
 

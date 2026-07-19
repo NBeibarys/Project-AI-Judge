@@ -110,39 +110,6 @@ class CriterionEvidence(BaseModel):
     verification: Optional[Literal["verified", "unverified", "contradicted"]] = None
 
 
-class WebVerificationEntry(BaseModel):
-    """Per-criterion web verification result produced by the web_verifier agent.
-
-    verification tags the analyst's evidence for a criterion:
-    - verified: web search found supporting evidence
-    - unverified: web search found nothing (NOT a penalty)
-    - contradicted: web search found evidence contradicting the claim
-    web_evidence states what was found (or, for 'unverified', what was searched).
-    """
-    verification: Literal["verified", "unverified", "contradicted"]
-    web_evidence: str = Field(min_length=1)
-
-
-class FellowshipV2WebVerificationReport(BaseModel):
-    """Flat web verification report for all 9 Fellowship criteria.
-
-    Produced by the dedicated web_verifier agent (runs between analyst and
-    grader). Same explicit-named-field pattern as FellowshipV2AnalystReport
-    so Gemini knows exactly what keys to fill. This schema is intentionally
-    flat (not the complex AnalystReport) so it has NO output_schema conflict
-    with google_search — the agent can use the google_search tool freely.
-    """
-    Originality: WebVerificationEntry
-    Approach: WebVerificationEntry
-    Personal_connection: WebVerificationEntry
-    Concreteness: WebVerificationEntry
-    Credibility_in_context: WebVerificationEntry
-    Trajectory: WebVerificationEntry
-    Program_fit: WebVerificationEntry
-    Regional_relevance: WebVerificationEntry
-    Communication_quality: WebVerificationEntry
-
-
 class FellowshipV2AnalystReport(BaseModel):
     """Explicit schema with all 9 Fellowship criteria as named fields.
 

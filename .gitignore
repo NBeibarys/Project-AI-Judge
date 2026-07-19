@@ -33,3 +33,4 @@ Thumbs.db
 .vscode/
 .idea/
 .venv/
+*.log

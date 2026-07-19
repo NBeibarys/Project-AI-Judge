@@ -22,7 +22,6 @@ from .adk_agents.prompts import (
     FELLOWSHIP_V2_GRADER_INSTRUCTION,
     FELLOWSHIP_V2_HEAD_INSTRUCTION,
     FELLOWSHIP_V2_RUBRIC_TEXT,
-    FELLOWSHIP_V2_WEB_VERIFIER_INSTRUCTION,
     R2B_ANALYST_INSTRUCTION,
     R2B_GRADER_INSTRUCTION,
     R2B_HEAD_INSTRUCTION,
@@ -108,21 +107,11 @@ class ProgramConfig:
     head_include_media: bool = True
     # Head scorer instruction (only used when uses_separate_head=True).
     head_instruction: str = ""
-    # Whether this program runs a dedicated web_verifier agent between the
-    # analyst and the grader. When True, the workflow runs
-    # analyst -> web_verifier -> grader (max 3 iterations), and the head
-    # receives the web_verification_report alongside the analyst_report.
-    # Fellowship V2 enables this; R2B and Alchemist do not.
-    # NOTE: web_verifier was removed — 3-agent pipeline is the default.
-    # Field kept for backward compatibility with ProgramConfig consumers.
-    uses_web_verification: bool = False
     # Whether a pitch deck PDF is required for this program. When True,
     # the pipeline ingests the pitch deck (Google Slides / Drive PDF) as
     # a multimodal Part alongside the video. Missing pitch deck penalizes
     # the relevant criteria (e.g., cap Product/MVP at 4 for Alchemist).
     requires_pitch_deck: bool = False
-    # Web verifier instruction (only used when uses_web_verification=True).
-    web_verifier_instruction: str = ""
     # Per-program sheet-geometry defaults, used by Config.from_env when the
     # corresponding env var is unset. Fellowship and R2B sheets have a merged
     # top-label row above the per-column header row (header_row=2,
@@ -169,8 +158,6 @@ FELLOWSHIP_V2_CONFIG = ProgramConfig(
     source_priority="video_primary",
     uses_separate_head=True,
     head_instruction=FELLOWSHIP_V2_HEAD_INSTRUCTION,
-    uses_web_verification=False,
-    web_verifier_instruction=FELLOWSHIP_V2_WEB_VERIFIER_INSTRUCTION,
     sheet_id_env="FELLOWSHIP_V2_SHEET_ID",
     sheet_range_env="FELLOWSHIP_V2_SHEET_RANGE",
     header_row_env="FELLOWSHIP_V2_HEADER_ROW",

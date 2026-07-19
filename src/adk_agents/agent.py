@@ -26,7 +26,7 @@ from google.adk.apps import App
 from google.adk.events import Event, EventActions
 from google.adk.models.google_llm import Gemini
 from google.genai import Client as GenAIClient
-from google.adk.tools import google_search, url_context
+from google.adk.tools import url_context
 from google.genai import types
 
 from ..programs import ProgramConfig, get_program_config
@@ -36,7 +36,6 @@ from .schemas import (
     AnalystReport,
     FellowshipV2AnalystReport,
     FellowshipV2HeadScore,
-    FellowshipV2WebVerificationReport,
     R2BAnalystReport,
     R2BGraderVerdict,
     R2BHeadScore,
@@ -268,56 +267,6 @@ class R2BApprovalGate(BaseAgent):
 # Agent builders.
 # ---------------------------------------------------------------------------
 
-def build_web_verifier_agent(
-    model: str,
-    program_config: ProgramConfig,
-) -> Agent:
-    """Build the web verification agent (Fellowship V2 only).
-
-    Runs between the analyst and the grader. Takes the analyst_report as
-    input (via the {analyst_report} template variable in its instruction)
-    and produces a FellowshipV2WebVerificationReport. The report is stored
-    under the output_key 'web_verification_report' in session state, so the
-    grader and head can reference it via {web_verification_report}.
-
-    This agent CAN use google_search: its output_schema is a simple flat
-    schema (FellowshipV2WebVerificationReport), not the complex
-    AnalystReport. The output_schema/google_search conflict that forced
-    google_search off the analyst does not apply here.
-    """
-    return Agent(
-        name="web_verifier",
-        description="Verifies analyst evidence via web search.",
-        model=Gemini(
-            model=model,
-            retry_options=types.HttpRetryOptions(
-                attempts=5,
-                exp_base=2,
-                initial_delay=2,
-                http_status_codes=[429],
-            ),
-        ),
-        generate_content_config=types.GenerateContentConfig(
-            temperature=GRADER_TEMPERATURE,
-            seed=DETERMINISM_SEED,
-            # response_mime_type is intentionally omitted: the ADK's
-            # set_output_schema sets it when the model supports response_schema
-            # directly (Vertex AI). On the Developer API (API key), the ADK
-            # uses the SetModelResponseTool (function calling) path instead,
-            # and response_mime_type=application/json CONFLICTS with function
-            # calling, causing 400 INVALID_ARGUMENT.
-            tool_config=_build_tool_config(model),
-        ),
-        instruction=program_config.web_verifier_instruction,
-        output_schema=FellowshipV2WebVerificationReport,
-        output_key="web_verification_report",
-        # output_key kept for backward compat but web verifier is no longer
-        # in the LoopAgent. See git history for the experiment.
-        tools=[google_search],
-        timeout=240,
-    )
-
-
 def build_root_agent(
     analyzer_model: str,
     grader_model: str,
@@ -381,7 +330,12 @@ def build_root_agent(
             thinking_config=types.ThinkingConfig(
                 thinking_level=types.ThinkingLevel.HIGH,
             ),
-            # response_mime_type omitted — see web_verifier comment above.
+            # response_mime_type is intentionally omitted: the ADK's
+            # set_output_schema sets it when the model supports response_schema
+            # directly (Vertex AI). On the Developer API (API key), the ADK
+            # uses the SetModelResponseTool (function calling) path instead,
+            # and response_mime_type=application/json CONFLICTS with function
+            # calling, causing 400 INVALID_ARGUMENT.
             tool_config=_build_tool_config(analyzer_model),
         ),
         instruction=program_config.analyst_instruction,
@@ -501,7 +455,12 @@ def build_head_agent(
                     else types.ThinkingLevel.HIGH
                 ),
             ),
-            # response_mime_type omitted — see web_verifier comment above.
+            # response_mime_type is intentionally omitted: the ADK's
+            # set_output_schema sets it when the model supports response_schema
+            # directly (Vertex AI). On the Developer API (API key), the ADK
+            # uses the SetModelResponseTool (function calling) path instead,
+            # and response_mime_type=application/json CONFLICTS with function
+            # calling, causing 400 INVALID_ARGUMENT.
             tool_config=_build_tool_config(head_model),
         ),
         instruction=program_config.head_instruction,

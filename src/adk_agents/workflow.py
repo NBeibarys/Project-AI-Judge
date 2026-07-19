@@ -4,7 +4,7 @@ All programs use the separate-head architecture:
   1. Run the analyst->grader VERIFY loop ONCE (max 3 iterations). The grader
      does not score; it only approves or rejects the evidence.
   2. If the evidence is approved, run the Head scorer N_SAMPLES times
-     (default 5) at temp=0. Each Head run independently scores the SAME
+     (default 3) at temp=0. Each Head run independently scores the SAME
      approved evidence.
   3. Average the criterion scores across the N_SAMPLES Head runs.
   4. Select the rationale from the Head run whose final_score is closest to
@@ -64,14 +64,16 @@ def _thread_event_loop() -> asyncio.AbstractEventLoop:
 
 # Default number of Head samples to run and average. The literature
 # (arXiv:2606.26185, Perea multi-judge playbook) recommends 2-3 samples;
-# 5 is the sweet spot for variance reduction without excessive cost on
-# every row.
-DEFAULT_N_SAMPLES = 5
+# 3 is the deployed default (see config.py's N_SAMPLES env var), balancing
+# variance reduction against cost on every row. This constant is never
+# actually consulted at runtime — pipeline.py's _build_workflow always
+# passes n_samples=config.n_samples explicitly — but is kept in sync with
+# that deployed value so it's accurate if ever used as a fallback.
+DEFAULT_N_SAMPLES = 3
 # Cap LLM calls per sample:
-#   Verify loop (R2B/Alchemist): analyst + grader × 3 iterations = 6 worst case.
-#   Verify loop (Fellowship V2): analyst + web_verifier + grader × 3 = 9
-#   worst case, plus google_search rounds inside web_verifier. 20 gives
-#   headroom for the search tool calls without being unbounded.
+#   Verify loop (all programs): analyst + grader × 3 iterations = 6 worst
+#   case. 20 gives headroom (e.g. url_context tool rounds) without being
+#   unbounded.
 #   Head: 1 call per run × N_SAMPLES.
 MAX_LLM_CALLS_R2B_VERIFY = 20
 MAX_LLM_CALLS_HEAD = 2
@@ -92,7 +94,7 @@ class AdkReviewWorkflow:
         self.analyzer_model = analyzer_model
         self.grader_model = grader_model
         self.program_config = program_config
-        # Head model defaults to the grader model (same Gemini 3.5-flash, temp=0).
+        # Head model defaults to the grader model (same model, temp=0).
         self.head_model = head_model or grader_model
         self.n_samples = max(1, n_samples)
 
@@ -249,19 +251,12 @@ class AdkReviewWorkflow:
 
     async def _run_head_once(
         self, state: dict, approved_evidence: dict, sample_idx: int,
-        web_verification_report: dict | None = None,
     ) -> dict:
         """Run the Head scorer once on the approved evidence.
 
         Returns the Head's R2BHeadScore output as a dict
         (criterion_scores, criterion_rationale, final_score, confidence, ...).
         Raises on failure (caller catches and excludes from average).
-
-        web_verification_report is the output of the web_verifier agent
-        (Fellowship V2 only). When provided, it is injected into session
-        state so the Head's instruction template ({web_verification_report})
-        resolves. When None (R2B/Alchemist), the Head instruction's
-        {web_verification_report} placeholder is not referenced.
         """
         session_service = InMemorySessionService()
         runner = Runner(
@@ -274,14 +269,10 @@ class AdkReviewWorkflow:
         # The Head sees the SAME approved evidence each run. We inject the
         # analyst_report into the session state so the Head's instruction
         # template ({analyst_report}) resolves to the approved evidence.
-        # For Fellowship V2, we also inject web_verification_report so the
-        # Head can use verification tags (verified/unverified/contradicted).
         initial_state: dict = {
             "analyst_report": approved_evidence,
             "sample_idx": sample_idx,
         }
-        if web_verification_report is not None:
-            initial_state["web_verification_report"] = web_verification_report
         await session_service.create_session(
             app_name=APP_NAME,
             user_id=user_id,
@@ -576,10 +567,6 @@ class AdkReviewWorkflow:
                 "n_valid": 0,
             }
 
-        # Web verifier was removed (3-agent pipeline). Set to None so
-        # _run_head_once skips injecting it into session state.
-        web_verification_report = None
-
         # First attempt at this ran all N_SAMPLES Head calls concurrently
         # via asyncio.gather unconditionally (no shared mutable state
         # between them, so it looked safe). Confirmed live it wasn't when
@@ -598,9 +585,7 @@ class AdkReviewWorkflow:
         # so they stay on the sequential path that's already proven safe.
         async def _run_sample(i: int) -> dict:
             try:
-                return await self._run_head_once(
-                    state, approved_evidence, i, web_verification_report
-                )
+                return await self._run_head_once(state, approved_evidence, i)
             except Exception:
                 # A single Head sample failing (API error, schema validation)
                 # doesn't kill the row — average whatever succeeded.
