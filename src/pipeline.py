@@ -441,15 +441,25 @@ def process_row(
             # A video link was submitted but could not be resolved to a
             # real, playable video by either tier — route to human review
             # instead of entering the LLM pipeline (saves the API cost too).
+            unresolvable_note = (
+                f"Video link could not be resolved to a playable video "
+                f"(not YouTube, not Drive, no direct video file found): "
+                f"{initial_state.get('video_error', 'unknown reason')}"
+            )
+            if config.program_config.criterion_column_names:
+                # Multi-column programs (R2B) need this shape, not
+                # score/reasoning — see the same branch below for the
+                # normal (post-LLM) case this mirrors.
+                return row_id, {
+                    "criterion_scores": {},
+                    "total_score": None,
+                    "notes": unresolvable_note,
+                    "human_review_flag": True,
+                }
             return row_id, {
                 "score": None,
-                "reasoning": (
-                    f"Video link could not be resolved to a playable video "
-                    f"(not YouTube, not Drive, no direct video file found): "
-                    f"{initial_state.get('video_error', 'unknown reason')}"
-                ),
+                "reasoning": unresolvable_note,
                 "human_review_flag": True,
-                "skipped_unresolvable_video": True,
             }
 
     # Virtual clip: a round video URL plus operator-typed Segment Start/End
