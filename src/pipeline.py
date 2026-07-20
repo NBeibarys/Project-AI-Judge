@@ -353,6 +353,14 @@ def process_row(
                 return row_id, None
             break
 
+    if config.program_config.program == "r2b" and not _submitted_video_url(header, row):
+        # R2B is video-only (no deck/text fallback) — a row with no video
+        # link at all has nothing to grade, same as a no-show. Skip it the
+        # same way (no checkpoint entry, no LLM cost) rather than running
+        # the full pipeline just to auto-score "no video submitted" — it
+        # becomes eligible again once a video link is added.
+        return row_id, None
+
     initial_state = {
         "row_id": row_id,
         "raw_row_text": _build_raw_row_text(
