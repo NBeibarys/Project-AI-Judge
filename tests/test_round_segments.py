@@ -5,7 +5,6 @@ from src.round_segments import (
     SegmentValidationError,
     parse_timestamp,
     seconds_to_timestamp,
-    validate_segments,
 )
 
 
@@ -36,41 +35,6 @@ class SecondsToTimestampTests(unittest.TestCase):
 
     def test_over_an_hour(self) -> None:
         self.assertEqual(seconds_to_timestamp(3768), "1:02:48")
-
-
-class ValidateSegmentsTests(unittest.TestCase):
-    def _ok_segments(self):
-        return [("Alpha", 60, 400), ("Beta", 410, 800), ("Gamma", 805, 1200)]
-
-    def test_accepts_valid(self) -> None:
-        validate_segments(self._ok_segments(), ["Alpha", "Beta", "Gamma"])
-
-    def test_rejects_missing_startup(self) -> None:
-        with self.assertRaises(SegmentValidationError):
-            validate_segments(self._ok_segments()[:2], ["Alpha", "Beta", "Gamma"])
-
-    def test_rejects_unexpected_startup(self) -> None:
-        segs = self._ok_segments() + [("Delta", 1210, 1500)]
-        with self.assertRaises(SegmentValidationError):
-            validate_segments(segs, ["Alpha", "Beta", "Gamma"])
-
-    def test_rejects_overlap(self) -> None:
-        segs = [("Alpha", 60, 500), ("Beta", 410, 800), ("Gamma", 805, 1200)]
-        with self.assertRaises(SegmentValidationError):
-            validate_segments(segs, ["Alpha", "Beta", "Gamma"])
-
-    def test_rejects_end_before_start(self) -> None:
-        segs = [("Alpha", 400, 60), ("Beta", 410, 800), ("Gamma", 805, 1200)]
-        with self.assertRaises(SegmentValidationError):
-            validate_segments(segs, ["Alpha", "Beta", "Gamma"])
-
-    def test_rejects_implausible_length(self) -> None:
-        too_short = [("Alpha", 60, 90), ("Beta", 410, 800), ("Gamma", 805, 1200)]
-        with self.assertRaises(SegmentValidationError):
-            validate_segments(too_short, ["Alpha", "Beta", "Gamma"])
-        too_long = [("Alpha", 60, 60 + 31 * 60), ("Beta", 2000, 2400), ("Gamma", 2405, 2800)]
-        with self.assertRaises(SegmentValidationError):
-            validate_segments(too_long, ["Alpha", "Beta", "Gamma"])
 
 
 class ReadSegmentBoundsTests(unittest.TestCase):

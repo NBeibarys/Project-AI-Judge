@@ -71,9 +71,10 @@ def _thread_event_loop() -> asyncio.AbstractEventLoop:
 # that deployed value so it's accurate if ever used as a fallback.
 DEFAULT_N_SAMPLES = 3
 # Cap LLM calls per sample:
-#   Verify loop (all programs): analyst + grader × 3 iterations = 6 worst
-#   case. 20 gives headroom (e.g. url_context tool rounds) without being
-#   unbounded.
+#   Verify loop: analyst + grader × ProgramConfig.max_verify_iterations —
+#   6 worst case for Alchemist/Fellowship V2 (3 iterations), 4 for R2B
+#   (2 iterations, lowered since both agents re-process the full pitch
+#   video every iteration). 20 gives headroom without being unbounded.
 #   Head: 1 call per run × N_SAMPLES.
 MAX_LLM_CALLS_R2B_VERIFY = 20
 MAX_LLM_CALLS_HEAD = 2
@@ -123,33 +124,33 @@ class AdkReviewWorkflow:
         """
         parts = []
         if include_media:
-            if not state.get("video_requires_url_context"):
-                video_data = state.get("video_data")
-                video_url = state.get("video_url")
-                if video_data or video_url:
-                    mime_type = state.get("video_mime_type") or "video/mp4"
-                    if video_data:
-                        parts.append(types.Part.from_bytes(
-                            data=video_data, mime_type=mime_type,
-                        ))
-                    else:
-                        # Virtual clip: with segment offsets in state (round-
-                        # video auto-indexing), Gemini fetches ONLY that span of
-                        # the URL server-side — the agents receive what looks
-                        # like an individual clip. Without offsets this builds
-                        # the same file_data Part from_uri always built.
-                        part_kwargs = {}
-                        if state.get("video_segment_start_s") is not None:
-                            part_kwargs["video_metadata"] = types.VideoMetadata(
-                                start_offset=f"{state['video_segment_start_s']}s",
-                                end_offset=f"{state['video_segment_end_s']}s",
-                            )
-                        parts.append(types.Part(
-                            file_data=types.FileData(
-                                file_uri=video_url, mime_type=mime_type,
-                            ),
-                            **part_kwargs,
-                        ))
+            video_data = state.get("video_data")
+            video_url = state.get("video_url")
+            if video_data or video_url:
+                mime_type = state.get("video_mime_type") or "video/mp4"
+                if video_data:
+                    parts.append(types.Part.from_bytes(
+                        data=video_data, mime_type=mime_type,
+                    ))
+                else:
+                    # Virtual clip: with segment offsets in state
+                    # (operator-typed Segment Start/End cells), Gemini
+                    # fetches ONLY that span of the URL server-side —
+                    # the agents receive what looks like an individual
+                    # clip. Without offsets this builds the same
+                    # file_data Part from_uri always built.
+                    part_kwargs = {}
+                    if state.get("video_segment_start_s") is not None:
+                        part_kwargs["video_metadata"] = types.VideoMetadata(
+                            start_offset=f"{state['video_segment_start_s']}s",
+                            end_offset=f"{state['video_segment_end_s']}s",
+                        )
+                    parts.append(types.Part(
+                        file_data=types.FileData(
+                            file_uri=video_url, mime_type=mime_type,
+                        ),
+                        **part_kwargs,
+                    ))
             # Alchemist: pitch deck PDF as a multimodal Part (required source).
             deck_data = state.get("pitch_deck_data")
             deck_url = state.get("pitch_deck_url")
@@ -181,11 +182,6 @@ class AdkReviewWorkflow:
                 "(already read for you — use this to cross-check against "
                 "other sources, same as any other evidence):\n"
                 f"{state['pitch_deck_chart_text']}"
-            )
-        if state.get("video_requires_url_context"):
-            text += (
-                "\n\nVIDEO WEBPAGE REQUIRES URL CONTEXT: "
-                f"{state['video_url']}"
             )
         if state.get("video_error"):
             text += f"\n\nVIDEO UNAVAILABLE: {state['video_error']}"

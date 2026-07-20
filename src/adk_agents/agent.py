@@ -145,29 +145,34 @@ def _as_dict(value) -> dict:
 # Gate: verify-only grader, no scoring here. The Head scores after.
 # ---------------------------------------------------------------------------
 
-def r2b_gate_decision(verdict: dict, attempt: int) -> tuple[bool, bool]:
-    """Return (approved, exhausted) for R2B verify-loop routing.
+def r2b_gate_decision(verdict: dict, attempt: int, max_iterations: int) -> tuple[bool, bool]:
+    """Return (approved, exhausted) for the analyst->grader verify-loop routing.
 
-    The R2B grader only verifies (no score). approve=true means evidence is
-    grounded and complete; the gate exits the loop so the Head can score.
-    Max 3 iterations per spec. A confirmed disqualifying issue (see
-    ``disqualifying_issue_found`` in R2BGraderVerdict) always counts as
-    exhausted immediately, regardless of attempt count — a lie can't be
-    fixed by another analyst revision.
+    Shared by all programs (despite the r2b-specific name — see
+    R2BApprovalGate). approve=true means evidence is grounded and complete;
+    the gate exits the loop so the Head can score. max_iterations comes from
+    ProgramConfig.max_verify_iterations, passed in by the caller rather than
+    hardcoded here — the loop's own max_iterations and this exhaustion
+    check used to be two separately-hardcoded "3"s that could drift apart
+    (lowering one without the other leaves the gate's exhaustion path unable
+    to ever trigger via attempt count, since the loop hard-stops first). A
+    confirmed disqualifying issue (see ``disqualifying_issue_found`` in
+    R2BGraderVerdict) always counts as exhausted immediately, regardless of
+    attempt count — a lie can't be fixed by another analyst revision.
     """
     approved = bool(verdict.get("approved"))
     disqualified = bool(verdict.get("disqualifying_issue_found"))
-    exhausted = disqualified or ((not approved) and attempt >= 3)
+    exhausted = disqualified or ((not approved) and attempt >= max_iterations)
     return approved, exhausted
 
 
 class R2BApprovalGate(BaseAgent):
-    """Zero-model routing step for the R2B analyst->grader verify loop.
+    """Zero-model routing step for the analyst->grader verify loop (all programs).
 
     Reads the grader's verify verdict. If approved, marks the evidence as
     approved and exits the loop (the Head scores separately, after). If
-    rejected, sends feedback back to the analyst for revision. After 3
-    attempts without approval, escalates to human review.
+    rejected, sends feedback back to the analyst for revision. After
+    max_iterations attempts without approval, escalates to human review.
 
     This gate does NOT produce a final_result with a score — that's the
     Head's job. It only sets ``evidence_approved=true`` on approval, or
@@ -180,6 +185,10 @@ class R2BApprovalGate(BaseAgent):
     # the analyst records it as evidence, and the Head prices it into the
     # relevant criterion scores; zeroing is the human reviewer's call.
     contradiction_auto_zero: bool = True
+    # Mirrors ProgramConfig.max_verify_iterations — must match the same
+    # LoopAgent's max_iterations (see build_root_agent) or the exhaustion
+    # path below can never trigger via attempt count.
+    max_iterations: int = 3
 
     async def _run_async_impl(
         self, ctx: InvocationContext
@@ -187,7 +196,7 @@ class R2BApprovalGate(BaseAgent):
         state = ctx.session.state
         attempt = int(state.get("attempt", 1))
         verdict = _as_dict(state.get("grader_verdict", {}))
-        approved, exhausted = r2b_gate_decision(verdict, attempt)
+        approved, exhausted = r2b_gate_decision(verdict, attempt, self.max_iterations)
         disqualified = (
             bool(verdict.get("disqualifying_issue_found"))
             and self.contradiction_auto_zero
@@ -299,7 +308,12 @@ def build_root_agent(
     # with output_schema - the model does tool calls instead of producing
     # structured JSON, causing all evidence to be rejected after 3 iterations.
     # Web research will be implemented as a separate pre-processing step.
-    analyst_tools = [url_context]
+    # url_context was also removed: it existed only for the "webpage with
+    # no discoverable direct video" fallback, which now raises instead of
+    # handing the analyst a page to interpret live (see video_urls.py) —
+    # it also caused a real production failure (a 400 from its own ~15MB
+    # fetch cap on a webpage source).
+    analyst_tools = []
 
     analyst = Agent(
         name="analyst",
@@ -330,6 +344,16 @@ def build_root_agent(
             thinking_config=types.ThinkingConfig(
                 thinking_level=types.ThinkingLevel.HIGH,
             ),
+            # media_resolution intentionally left unspecified: a live A/B
+            # test (LOW/MEDIUM/HIGH on the same real R2B row) showed HIGH
+            # costs ~2-3x the analyst/grader latency but is NOT a clean
+            # quality win — it caught one visual detail LOW/MEDIUM missed
+            # (a product prototype shown on a slide) but also DROPPED the
+            # founders' names that LOW/MEDIUM both caught. Run-to-run
+            # extraction variance looks at least as large as any resolution
+            # effect. Unspecified (Gemini's own default, empirically same
+            # cost as LOW/MEDIUM for video) is the settled choice until a
+            # multi-run variance test justifies paying HIGH's latency cost.
             # response_mime_type is intentionally omitted: the ADK's
             # set_output_schema sets it when the model supports response_schema
             # directly (Vertex AI). On the Developer API (API key), the ADK
@@ -363,19 +387,23 @@ def build_root_agent(
             thinking_config=types.ThinkingConfig(
                 thinking_level=types.ThinkingLevel.HIGH,
             ),
+            # media_resolution intentionally left unspecified — see the
+            # analyst's config above for the A/B test that settled this.
             tool_config=_build_tool_config(grader_model),
         ),
         instruction=program_config.grader_instruction,
         output_schema=R2BGraderVerdict,
         output_key="grader_verdict",
-        tools=[url_context],
+        # url_context removed — see analyst's tools comment above.
+        tools=[],
         timeout=240,
     )
     gate = R2BApprovalGate(
         name="approval_gate",
         contradiction_auto_zero=program_config.contradiction_auto_zero,
+        max_iterations=program_config.max_verify_iterations,
     )
-    max_iter = 3
+    max_iter = program_config.max_verify_iterations
     # Web verifier was removed: the 3-agent pipeline (analyst -> grader -> gate)
     # is reliable and the rubric already handles unverified claims via the
     # "each level up requires MORE EVIDENCE" rule. See git history for the
@@ -455,6 +483,8 @@ def build_head_agent(
                     else types.ThinkingLevel.HIGH
                 ),
             ),
+            # media_resolution intentionally left unspecified — see the
+            # analyst's config above for the A/B test that settled this.
             # response_mime_type is intentionally omitted: the ADK's
             # set_output_schema sets it when the model supports response_schema
             # directly (Vertex AI). On the Developer API (API key), the ADK
@@ -475,10 +505,15 @@ def build_head_agent(
     )
 
 
-# Module-level root_agent/app for ADK CLI discovery. The active program is
-# resolved from the PROGRAM env var (default fellowship_v2), mirroring
-# main.py. Config.from_env is not called here (no sheet/validation) — that
-# happens at batch run time via run_batch.
+# Module-level root_agent/app for ADK CLI discovery (adk web / adk run)
+# ONLY — the real batch pipeline never references root_agent/app/
+# _default_program_config; it builds its own agents via config's real
+# values in workflow.py. The "fellowship_v2" fallback below is NOT the
+# app's default program (there is no such thing — see main.py, which
+# requires PROGRAM explicitly and raises if it's unset). It exists purely
+# so this module can be imported without crashing when ANALYZER_MODEL/
+# GRADER_MODEL/PROGRAM aren't set yet (see below); it has zero effect on
+# what actually gets graded.
 #
 # No hardcoded model-name fallback here, matching config.py: this used to
 # default to a specific Gemini tier independently of config.py's own

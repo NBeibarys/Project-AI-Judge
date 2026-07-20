@@ -1,4 +1,4 @@
-"""Go/no-go check for round-video auto-indexing (spec 2026-07-14).
+"""Go/no-go check for round-video segment clipping (operator-entered timestamps).
 
 Usage:
     python scripts/verify_youtube_clipping.py <youtube_url> <start like 3:12> <end like 9:48>

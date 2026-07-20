@@ -153,49 +153,6 @@ with st.sidebar:
         st.success("Checkpoint reset.")
         st.rerun()
 
-    st.divider()
-    st.header("Round video indexing")
-    round_url = st.text_input(
-        "Round video (YouTube URL)",
-        value="",
-        help="One recording per round. Indexing watches it once, writes "
-        "each startup's Segment Start/End to the sheet for your review, "
-        "and fills the Video column with this URL. Add the two segment "
-        "header columns to the tab once before first use.",
-    )
-    if st.button(
-        "Index round",
-        disabled=not round_url.strip(),
-        use_container_width=True,
-        help="Runs the indexing pass (a few minutes for an hour-long "
-        "recording). Grading is a separate step — review the timestamps "
-        "first.",
-    ):
-        from src.round_indexer import run_round_indexing
-
-        with st.spinner("Indexing round — watching the recording…"):
-            try:
-                summary = run_round_indexing(config, round_url.strip())
-            except Exception as exc:  # noqa: BLE001 — operator-facing surface
-                st.error(f"Indexing failed: {exc}")
-            else:
-                st.success(
-                    f"Indexed {summary['indexed']} startups "
-                    f"({summary['needs_check']} marked NEEDS CHECK, "
-                    f"{summary.get('no_pitch', 0)} with no gradeable pitch). "
-                    "Review the Segment columns in the sheet, then run grading."
-                )
-                st.dataframe([
-                    {
-                        "Startup": s.startup_name,
-                        "Start": s.start,
-                        "End": s.end,
-                        "Status": s.pitch_status,
-                        "Verified": "yes" if s.verified else "NEEDS CHECK",
-                    }
-                    for s in summary["segments"]
-                ])
-
 if run_clicked:
     progress_bar = st.progress(0.0)
     status_text = st.empty()

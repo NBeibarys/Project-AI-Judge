@@ -242,9 +242,9 @@ def _submitted_video_url(header: list, row: list) -> str:
 
 
 # Hosts that the Tier-1 resolver cannot fetch directly (Drive serves an HTML
-# interstitial or requires auth, so resolve_video_url returns a webpage with
-# requires_url_context=True). These must go through Tier-2 (Drive API download
-# → Gemini Files API upload) so the analyst receives the video as a native multimodal Part.
+# interstitial or requires auth, so resolve_video_url raises). These must go
+# through Tier-2 (Drive API download → Gemini Files API upload) so the
+# analyst receives the video as a native multimodal Part.
 _DRIVE_HOSTS = frozenset({"drive.google.com", "drive.usercontent.google.com"})
 
 
@@ -252,10 +252,10 @@ def _is_drive_url(url: str) -> bool:
     """Detect Google Drive links that require Tier-2 ingestion.
 
     Tier-1 (resolve_video_url) cannot handle Drive: the link resolves to an
-    HTML interstitial or an auth-walled download endpoint, so Tier-1 returns
-    requires_url_context=True and the video Part is never created. Detecting
-    the host explicitly lets us short-circuit to Tier-2 without paying for a
-    metadata round-trip that we already know will not yield a fetchable URI.
+    HTML interstitial or an auth-walled download endpoint, so Tier-1 raises
+    and the video Part is never created. Detecting the host explicitly lets
+    us short-circuit to Tier-2 without paying for a metadata round-trip that
+    we already know will not yield a fetchable URI.
     """
     host = (urlparse(url).hostname or "").lower().rstrip(".")
     return host in _DRIVE_HOSTS
@@ -274,17 +274,12 @@ def _submitted_pitch_deck_url(header: list, row: list) -> str:
 
 
 def _row_has_video(state: dict) -> bool:
-    return bool(
-        state.get("video_data")
-        or state.get("video_url")
-        or state.get("video_requires_url_context")
-    )
+    return bool(state.get("video_data") or state.get("video_url"))
 
 
 def _retry_without_video(workflow, initial_state: dict, exc: Exception) -> dict:
-    """The row had a video attached (as downloaded bytes, a direct URI, or
-    a webpage for the analyst's url_context tool to read) and
-    workflow.invoke failed. Confirmed live across three different failure
+    """The row had a video attached (as downloaded bytes or a direct URI)
+    and workflow.invoke failed. Confirmed live across three different failure
     signatures on video-heavy rows — a 429 RESOURCE_EXHAUSTED from an
     oversized video payload, a 400 from Vertex's url_context fetch hitting
     its own ~15MB size cap on a webpage video source (max_bytes_fetched:
@@ -306,7 +301,6 @@ def _retry_without_video(workflow, initial_state: dict, exc: Exception) -> dict:
     no_video_state.pop("video_url", None)
     no_video_state.pop("video_mime_type", None)
     no_video_state.pop("video_source", None)
-    no_video_state["video_requires_url_context"] = False
     size_note = f" ({video_size / 1e6:.0f}MB)" if video_size else ""
     no_video_state["video_error"] = (
         f"Video{size_note} excluded from analysis — processing failed "
@@ -382,15 +376,14 @@ def process_row(
         #      fall back to Tier-2 (ingest_video_for_r2b) which downloads via
         #      the Drive API and uploads to Files API / inline bytes so the
         #      analyst receives the video as a native Part.
-        #   3. If Tier-1 resolves to requires_url_context=True (a webpage with
-        #      no discoverable direct video — e.g. Canva, Loom share pages),
-        #      that result is used as-is: the analyst's url_context tool reads
-        #      the page live. Tier-2 must NOT download and re-upload that
-        #      webpage — it isn't video data, and disguising HTML as a video
-        #      Part sends garbage input to Gemini instead of an honest
-        #      "can't resolve this video" (see video_ingestion.py docstring).
-        #   4. If Tier-2 also fails, record video_error; the workflow surfaces
-        #      "VIDEO UNAVAILABLE: ..." to the analyst.
+        #   3. If BOTH fail — not YouTube, not Drive, no direct video file
+        #      found anywhere — this is a genuine resolution failure, not a
+        #      fallback source. A submitted-but-unresolvable link might be a
+        #      real video the applicant just hosted somewhere Gemini can't
+        #      reach (a Canva/Loom share page, a JS-rendered site); auto-
+        #      scoring it as "no video submitted" would unfairly penalize
+        #      that, so this short-circuits to human review below instead
+        #      of entering the LLM pipeline at all.
         resolved_video: ResolvedVideo | None = None
         try:
             resolved_video = resolve_video_url(submitted_video_url)
@@ -407,8 +400,7 @@ def process_row(
                 # Vertex's 15MB URI-fetch limit; see ingest_video_for_r2b),
                 # but because Tier-1 alone has no way to make that
                 # size-aware decision.
-                not resolved_video.requires_url_context
-                and "youtube" not in resolved_video.uri
+                "youtube" not in resolved_video.uri
                 and "youtu.be" not in resolved_video.uri
             )
         )
@@ -420,7 +412,7 @@ def process_row(
                 )
             except VideoResolutionError as exc:
                 # Preserve the Tier-1 error when Tier-2 also fails so the
-                # analyst sees the most informative message.
+                # human reviewer sees the most informative message.
                 initial_state["video_error"] = str(exc)
                 resolved_video = None
 
@@ -429,9 +421,6 @@ def process_row(
             initial_state["video_data"] = resolved_video.data
             initial_state["video_mime_type"] = resolved_video.mime_type
             initial_state["video_source"] = resolved_video.source
-            initial_state["video_requires_url_context"] = (
-                resolved_video.requires_url_context
-            )
             initial_state["video_original_size_bytes"] = (
                 resolved_video.original_size_bytes
             )
@@ -440,11 +429,25 @@ def process_row(
             # Part (video_url is set) AND append "VIDEO UNAVAILABLE: ..."
             # (video_error is set) — a contradictory state for the analyst.
             initial_state.pop("video_error", None)
+        else:
+            # A video link was submitted but could not be resolved to a
+            # real, playable video by either tier — route to human review
+            # instead of entering the LLM pipeline (saves the API cost too).
+            return row_id, {
+                "score": None,
+                "reasoning": (
+                    f"Video link could not be resolved to a playable video "
+                    f"(not YouTube, not Drive, no direct video file found): "
+                    f"{initial_state.get('video_error', 'unknown reason')}"
+                ),
+                "human_review_flag": True,
+                "skipped_unresolvable_video": True,
+            }
 
-    # Virtual clip (round-video auto-indexing): a YouTube round URL plus
-    # operator-reviewed Segment Start/End cells means Gemini should watch
-    # only this startup's span — clipped server-side, no cut files. See
-    # docs/superpowers/specs/2026-07-14-round-video-auto-indexing-design.md
+    # Virtual clip: a round video URL plus operator-typed Segment Start/End
+    # cells means Gemini should watch only this startup's span — clipped
+    # server-side, no cut files. Segments are entered by hand; there is no
+    # automatic proposer (see round_segments.py's module docstring).
     segment_bounds = _read_segment_bounds(header, row)
     if segment_bounds and initial_state.get("video_url"):
         initial_state["video_segment_start_s"] = segment_bounds[0]
@@ -480,7 +483,6 @@ def process_row(
         config.program_config.source_priority == "video_primary"
         and not initial_state.get("video_url")
         and not initial_state.get("video_data")
-        and not initial_state.get("video_requires_url_context")
     ):
         initial_state.setdefault(
             "video_error",

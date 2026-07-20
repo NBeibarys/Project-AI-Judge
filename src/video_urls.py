@@ -68,7 +68,6 @@ class ResolvedVideo:
     uri: str
     mime_type: str | None
     source: str
-    requires_url_context: bool = False
     data: bytes | None = None
     # Size in bytes BEFORE any compression/transcoding — None when not
     # downloaded ourselves (Tier-1 URI references) or not tracked. Lets
@@ -425,10 +424,15 @@ def resolve_video_url(
                     source,
                 )
 
-    # The analyst uses URL context to interpret non-standard or JS-rendered pages.
-    return ResolvedVideo(
-        uri=page_or_media.final_url,
-        mime_type=None,
-        source="webpage",
-        requires_url_context=True,
+    # No direct video found at this URL (not YouTube, not a directly
+    # fetchable video file, no discoverable video metadata on the page).
+    # Previously this returned a "webpage" ResolvedVideo for the analyst's
+    # url_context tool to interpret live — removed after url_context caused
+    # a real production failure (a 400 from its own ~15MB fetch cap on a
+    # webpage video source) and, more fundamentally, because reading
+    # incidental webpage text is not a reliable substitute for grading
+    # actual pitch content. Callers now treat this as a genuine resolution
+    # failure and route the row to human review instead.
+    raise VideoResolutionError(
+        f"URL does not resolve to a playable video: {page_or_media.final_url}"
     )

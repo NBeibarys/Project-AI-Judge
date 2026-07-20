@@ -1,9 +1,9 @@
 """Program configuration: per-program rubric, prompts, and sheet geometry.
 
-The pipeline selects a ProgramConfig at startup (via the ``PROGRAM`` env var,
-default ``fellowship_v2``) and threads it through the agent builder and
-workflow so the same LoopAgent core grades with the right rubric,
-instructions, and sheet columns.
+The pipeline selects a ProgramConfig at startup (via the ``PROGRAM`` env
+var — required, no default; see main.py) and threads it through the agent
+builder and workflow so the same LoopAgent core grades with the right
+rubric, instructions, and sheet columns.
 
 All programs use the separate-head architecture: analyst + grader (verify
 only) in a loop, then a separate Head agent (score only, after approval). The
@@ -84,6 +84,15 @@ class ProgramConfig:
     # for human review with the inconsistency spelled out in the notes;
     # zeroing is the human reviewer's call, never automatic.
     contradiction_auto_zero: bool = True
+    # Max analyst<->grader verify-loop iterations before escalating to
+    # human review (see agent.py's build_root_agent/R2BApprovalGate/
+    # r2b_gate_decision — shared across all programs despite the r2b-
+    # specific naming). Default 3 preserves existing Alchemist/Fellowship
+    # V2 behavior. R2B sets 2: most rows converge in 1-2 rounds, the third
+    # iteration was the tail case, and both analyst and grader re-process
+    # the full pitch video every iteration — capping this directly bounds
+    # R2B's worst-case per-row latency, which is video-processing-bound.
+    max_verify_iterations: int = 3
     # Whether the Head sees raw media (video/deck Parts) at all, vs. only
     # the analyst's text evidence report (which the grader already
     # approved). The grader is UNAFFECTED by this flag — it always sees
@@ -189,6 +198,7 @@ R2B_CONFIG = ProgramConfig(
     source_priority="video_primary",
     uses_separate_head=True,
     head_instruction=R2B_HEAD_INSTRUCTION,
+    max_verify_iterations=2,
     sheet_id_env="R2B_SHEET_ID",
     sheet_range_env="R2B_SHEET_RANGE",
     header_row_env="R2B_HEADER_ROW",

@@ -39,7 +39,7 @@ class Config:
     @classmethod
     def from_env(
         cls,
-        program: str = "fellowship_v2",
+        program: str,
         *,
         sheet_id_override: str | None = None,
         sheet_range_override: str | None = None,

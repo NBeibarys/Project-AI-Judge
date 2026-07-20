@@ -9,11 +9,17 @@ What stays on the Tier-1 resolver (video_urls.resolve_video_url) and is
 never downloaded here:
   - Public YouTube URLs (native Gemini input, no download)
   - Direct HTTPS video ≤100MB with a known MIME
-  - Webpages with no discoverable direct video (requires_url_context=True,
-    e.g. Canva/Loom share pages) — handed to the analyst's url_context tool
-    to read live, never downloaded as if it were video data. A page's HTML
-    is not a video file; disguising one as the other sends Gemini garbage
-    input instead of an honest "video unavailable."
+
+A URL with no discoverable direct video (not YouTube, no direct video
+file, no video metadata on the page, e.g. a Canva/Loom share page) is a
+genuine resolution failure, not a fallback source — resolve_video_url
+raises instead of returning a "webpage" reference. There used to be a
+url_context-based fallback here (having the analyst read the page live);
+it was removed after causing a real production failure (a 400 from its
+own ~15MB fetch cap on a webpage source) and because a page's HTML was
+never a reliable substitute for actual pitch video content. The caller
+now routes rows with an unresolvable-but-submitted video link to human
+review instead.
 
 Auth: the Drive download reuses the same service-account JSON as Sheets,
 but with the drive.readonly scope. The Drive file MUST be shared with the
@@ -431,11 +437,12 @@ def ingest_video_for_r2b(
     """Resolve a submitted video URL for R2B grading.
 
     Tries Tier-1 (video_urls.resolve_video_url) first — it's the cheap path
-    and covers YouTube natively without download. If Tier-1 succeeds without
-    needing url_context, returns that result. Otherwise falls back to
-    Tier-2: download the source from Google Drive via the Drive API,
-    returning a ResolvedVideo with the media as in-memory bytes (Vertex) or
-    a Files API URI (Developer API).
+    and covers YouTube natively without download. If Tier-1 resolves a real
+    video, returns that result. Otherwise falls back to Tier-2: download
+    the source from Google Drive via the Drive API, returning a
+    ResolvedVideo with the media as in-memory bytes (Vertex) or a Files
+    API URI (Developer API). If neither resolves, raises — the caller
+    routes that to human review.
     """
     # Tier 1 first.
     resolved: Optional[ResolvedVideo] = None
@@ -444,7 +451,7 @@ def ingest_video_for_r2b(
     except VideoResolutionError:
         resolved = None
 
-    if resolved is not None and not resolved.requires_url_context:
+    if resolved is not None:
         is_youtube = "youtube" in resolved.uri or "youtu.be" in resolved.uri
         if is_youtube:
             return resolved
@@ -495,15 +502,11 @@ def ingest_video_for_r2b(
                 f"Drive video download failed: {type(exc).__name__}: {exc}"
             ) from exc
 
-    # No direct-HTTPS-download fallback here: if resolve_video_url() only
-    # found a webpage (requires_url_context=True), that URL is not video
-    # data — the caller keeps it as a Tier-1 result for the analyst's
-    # url_context tool to read live instead of calling this function at all.
-    # Downloading such a webpage and re-uploading it labeled "video/mp4"
-    # previously sent raw HTML to Gemini disguised as a video file.
-
-    # Nothing worked. Surface a clear error so the pipeline scores
-    # criterion 6 as 1 with rationale "No video submitted."
+    # Nothing worked (not YouTube, not a direct video file, not Drive).
+    # Surface a clear error — the caller (pipeline.py) routes a submitted-
+    # but-unresolvable video link to human review rather than downloading
+    # whatever the URL actually points to (e.g. a webpage) and disguising
+    # it as video data.
     raise VideoResolutionError(
         "Video could not be resolved to a downloadable source."
     )

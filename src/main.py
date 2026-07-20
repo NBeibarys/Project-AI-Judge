@@ -11,7 +11,17 @@ from .pipeline import run_batch
 def main():
     # The maintained parser correctly handles quoting, escapes, and interpolation.
     load_dotenv(override=False)
-    program = os.environ.get("PROGRAM", "fellowship_v2")
+    # No fallback: an unset PROGRAM must fail loudly here, not silently grade
+    # whichever program happened to be the old default (a real source of
+    # confusion — an operator or reviewer expecting one program's sheet
+    # while PROGRAM was actually unset/stale would get another program's
+    # results with no signal anything was wrong).
+    program = os.environ.get("PROGRAM", "")
+    if not program:
+        raise RuntimeError(
+            "PROGRAM not set. Set PROGRAM to one of: fellowship_v2, r2b, "
+            "alchemist — there is no default."
+        )
     config = Config.from_env(program)
     print(f"Running ADK batch [program={program}] against sheet {config.sheet_id}")
 
