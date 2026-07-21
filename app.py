@@ -31,7 +31,13 @@ if _REPO_DIR not in sys.path:
 
 from src.adk_agents import cancel_all_active
 from src.config import Config
-from src.pipeline import run_batch, _derive_row_id, _find_duplicate_emails
+from src.pipeline import (
+    run_batch,
+    _derive_row_id,
+    _find_duplicate_emails,
+    _find_name_column_index,
+    _resolve_name_column_index,
+)
 from src.programs import get_program_config
 from src.google_clients import get_sheets_service, read_sheet_rows
 
@@ -96,6 +102,7 @@ with st.sidebar:
     # genuinely bad sheet ID/tab once the user finishes typing.
     score_column_override = None
     reasoning_column_override = None
+    name_column_override = None
     ignored_columns_override = None
     criterion_column_overrides = None
     total_score_column_override = None
@@ -171,6 +178,32 @@ with st.sidebar:
                 )
                 _mapped_output_columns = {score_column_override, reasoning_column_override}
 
+            # Name column: which sheet column identifies the applicant/
+            # startup by name — used by pipeline.py for no-show detection,
+            # R2B's wrong-segment tripwire note, and duplicate-email
+            # disambiguation (see src.pipeline._resolve_name_column_index).
+            # Independent of the single-column vs multi-column split above
+            # (every program has applicants with names regardless of
+            # output-column shape), so this executes exactly once
+            # regardless of which branch ran, rather than being duplicated
+            # in both. Defaults to the existing hint-based auto-detect
+            # (_find_name_column_index — the same "startup/company/team/
+            # project name" guess ProgramConfig.name_column_name=None keeps
+            # using) so a sheet with a conventional header still
+            # pre-selects the right column; falls back to index 0 (like
+            # every other selectbox default here) when no hint matches,
+            # e.g. Fellowship V2's "Participant Name"-style header.
+            _default_name_idx = _find_name_column_index(_preview_header)
+            if _default_name_idx is None:
+                _default_name_idx = 0
+            name_column_override = st.selectbox(
+                "Name column",
+                options=_preview_header, index=_default_name_idx,
+                help="Column identifying the applicant/startup by name — "
+                "used for no-show detection, R2B's wrong-segment tripwire "
+                "note, and duplicate-email disambiguation.",
+            )
+
             # Pre-check whatever the hardcoded defaults would have excluded
             # (PII columns, output columns) so switching to a new sheet
             # doesn't silently feed those to the AI just because nobody
@@ -200,6 +233,7 @@ try:
         top_label_row_override=int(top_label_row_input),
         score_column_override=score_column_override,
         reasoning_column_override=reasoning_column_override,
+        name_column_override=name_column_override,
         ignored_columns_override=(
             tuple(ignored_columns_override) if ignored_columns_override else None
         ),
@@ -481,7 +515,13 @@ else:
     reasoning_col = config.program_config.reasoning_column_name
 score_idx = _col_lookup.get(score_col.strip().lower())
 reasoning_idx = _col_lookup.get(reasoning_col.strip().lower())
-name_idx = _col_lookup.get("startup name")
+# Was a hardcoded _col_lookup.get("startup name") — silently blank for any
+# program/sheet not using that exact header (e.g. Fellowship V2's
+# "Participant Name"-style header). Uses the same resolver as no-show
+# detection/duplicate-email disambiguation so this display column honors
+# an operator-selected Name column override too, and otherwise falls back
+# to the same hint-based auto-detect used everywhere else.
+name_idx = _resolve_name_column_index(header, config.program_config)
 
 # A blank-score row with a human_review checkpoint status is still a
 # completed grade — the AI finished its 3 review attempts and correctly
@@ -511,7 +551,9 @@ for i, row in enumerate(rows):
         graded_count += 1
     else:
         sheet_row_number = config.header_row + i + 1
-        row_id = _derive_row_id(header, row, sheet_row_number, duplicate_emails)
+        row_id = _derive_row_id(
+            header, row, sheet_row_number, duplicate_emails, program_config=config.program_config,
+        )
         row_key = hashlib.sha256(row_id.encode("utf-8")).hexdigest()
         status = checkpoint_statuses.get(row_key)
         if status == "human_review":

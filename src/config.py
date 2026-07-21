@@ -48,6 +48,7 @@ class Config:
         top_label_row_override: int | None = None,
         score_column_override: str | None = None,
         reasoning_column_override: str | None = None,
+        name_column_override: str | None = None,
         ignored_columns_override: tuple[str, ...] | None = None,
         criterion_column_overrides: dict[str, str] | None = None,
         total_score_column_override: str | None = None,
@@ -78,6 +79,16 @@ class Config:
         Total Score column and a Notes/Comments column, instead of a single
         score+reasoning pair). Same non-mutating dataclasses.replace
         approach — the shared R2B_CONFIG singleton is never mutated.
+
+        name_column_override selects which sheet column holds the
+        applicant/startup name (used for no-show detection, R2B's wrong-
+        segment tripwire note, and duplicate-email disambiguation — see
+        pipeline.py's _resolve_name_column_index/_derive_row_id), instead
+        of pipeline.py guessing it via a hardcoded substring hint list.
+        Applied independently of the single-column vs multi-column split
+        above (the name column matters for both output shapes), via its
+        own dataclasses.replace on whatever program_config already is by
+        that point — so it composes with either branch above.
         """
         program_config = get_program_config(program)
         if program_config.criterion_column_names is not None:
@@ -141,6 +152,17 @@ class Config:
                 # keep visible to the AI.
                 excluded_header_names=excluded_names,
                 excluded_header_substrings=(),
+            )
+        if name_column_override:
+            # Independent of the single-column vs multi-column split above:
+            # the applicant-name column matters for both output shapes, so
+            # this is its own top-level check rather than living inside
+            # either branch (which would silently drop it for the other
+            # shape). Replaces whatever program_config already is by this
+            # point — composes correctly whether or not one of the branches
+            # above already produced a derived ProgramConfig.
+            program_config = dataclasses.replace(
+                program_config, name_column_name=name_column_override,
             )
         sheet_id = sheet_id_override or os.environ.get(program_config.sheet_id_env, "")
         sa_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_PATH", "")

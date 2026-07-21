@@ -138,8 +138,54 @@ _NAME_COLUMN_HINTS = ("startup name", "company name", "team name", "project name
 
 
 def _find_name_column_index(header: list) -> int | None:
+    """Exact match first, substring fallback second — a column whose text
+    only CONTAINS a hint (e.g. "Full Team Name List") must never win over
+    an earlier or later column that IS one of the hints exactly (e.g.
+    "Startup Name"). Verified real-sheet behavior is unaffected (R2B's
+    actual header has no such collision today); this just closes a latent
+    divergence found when the no-show/segment-tripwire lookups were
+    consolidated onto this function instead of their own separate
+    exact-match logic.
+    """
+    normalized = [_normalize_for_match(col) for col in header]
+    for i, col in enumerate(normalized):
+        if col in _NAME_COLUMN_HINTS:
+            return i
+    for i, col in enumerate(normalized):
+        if any(hint in col for hint in _NAME_COLUMN_HINTS):
+            return i
+    return None
+
+
+def _resolve_name_column_index(header: list, program_config) -> int | None:
+    """Resolve the applicant/startup-name column index for this program.
+
+    If program_config.name_column_name is set — an operator explicitly
+    picked it via app.py's "Column mapping" sidebar / Config.from_env's
+    name_column_override, same pattern as score_column_name/
+    reasoning_column_name/criterion_column_names — find it via a
+    case/whitespace-tolerant EXACT match against header (reusing
+    _normalize_for_match, this file's existing normalization convention,
+    plus a .strip() since an explicit selection should tolerate a
+    trailing-space header like the sheet quirks already documented
+    elsewhere in this file). This is deliberately an exact match, not a
+    substring hint match: the operator named one specific column, so
+    matching a different column that merely contains that text would be
+    surprising. Returns None if the configured name doesn't actually
+    exist in this sheet's header (e.g. a stale mapping left over from
+    switching sheets) — callers must treat that exactly like "no name
+    column found" today: gracefully, not a crash.
+
+    Falls back to the existing hint-based _find_name_column_index when
+    program_config.name_column_name is None — every program's default,
+    preserving today's guess-based behavior unchanged.
+    """
+    configured_name = getattr(program_config, "name_column_name", None)
+    if configured_name is None:
+        return _find_name_column_index(header)
+    target = _normalize_for_match(configured_name.strip())
     for i, col in enumerate(header):
-        if any(hint in _normalize_for_match(col) for hint in _NAME_COLUMN_HINTS):
+        if _normalize_for_match(col.strip()) == target:
             return i
     return None
 
@@ -189,6 +235,7 @@ def _derive_row_id(
     row: list,
     sheet_row_number: int,
     duplicate_emails: frozenset = frozenset(),
+    program_config=None,
 ) -> str:
     """Prefer an email column as the stable applicant ID (survives sheet
     re-sorts); fall back to the sheet row number if no email column is
@@ -199,13 +246,25 @@ def _derive_row_id(
     one exists and is non-blank for this row (still survives a resort,
     unlike the row-number fallback used when no such column is found or
     it's blank here).
+
+    program_config, when given, is threaded into _resolve_name_column_index
+    so an operator-selected name_column_name (Config.from_env's
+    name_column_override) is honored here too, not just for no-show
+    detection and R2B's segment tripwire note. None (the default, kept for
+    any caller not yet updated to pass it) falls back to the original
+    unconditional _find_name_column_index(header) call — unchanged
+    behavior.
     """
     for i, col in enumerate(header):
         if "email" in _normalize_for_match(col):
             if i < len(row) and row[i].strip():
                 email = row[i].strip().lower()
                 if email in duplicate_emails:
-                    name_idx = _find_name_column_index(header)
+                    name_idx = (
+                        _resolve_name_column_index(header, program_config)
+                        if program_config is not None
+                        else _find_name_column_index(header)
+                    )
                     if name_idx is not None and name_idx < len(row) and row[name_idx].strip():
                         return f"{email}|{row[name_idx].strip().lower()}"
                     return f"{email}|row_{sheet_row_number}"
@@ -363,7 +422,9 @@ def process_row(
             raise RowCancelled("Grading was cancelled before this row completed.")
 
     _raise_if_cancelled()
-    row_id = _derive_row_id(header, row, sheet_row_number, duplicate_emails)
+    row_id = _derive_row_id(
+        header, row, sheet_row_number, duplicate_emails, program_config=config.program_config,
+    )
     if checkpoint.is_done(row_id) and not force:
         return row_id, None  # already graded in a prior run, nothing to write
     if _segment_needs_human_review(header, row):
@@ -371,14 +432,12 @@ def process_row(
         # to grading the full round video; a human must correct the boundaries.
         return row_id, None
 
-    for i, col in enumerate(header):
-        if _normalize_for_match(col) in ("startup name", "company name", "team name"):
-            if i < len(row) and _is_no_show(row[i]):
-                # Didn't show up to pitch — nothing to grade. No checkpoint
-                # entry either, so removing the marker text later makes the
-                # row eligible again on the next run.
-                return row_id, None
-            break
+    name_col_idx = _resolve_name_column_index(header, config.program_config)
+    if name_col_idx is not None and name_col_idx < len(row) and _is_no_show(row[name_col_idx]):
+        # Didn't show up to pitch — nothing to grade. No checkpoint entry
+        # either, so removing the marker text later makes the row eligible
+        # again on the next run.
+        return row_id, None
 
     if config.program_config.program == "r2b" and not _submitted_video_url(header, row):
         # R2B is video-only (no deck/text fallback) — a row with no video
@@ -585,7 +644,7 @@ def process_row(
         # the analyst says so, the grader loop escalates via the existing
         # human-review path, and no score is written.
         startup_name = ""
-        name_idx = _find_name_column_index(header)
+        name_idx = _resolve_name_column_index(header, config.program_config)
         if name_idx is not None and len(row) > name_idx:
             startup_name = row[name_idx].strip()
         if startup_name:
@@ -925,7 +984,9 @@ def run_batch(
                 continue
             if limit is not None and submitted >= limit:
                 break
-            row_id_preview = _derive_row_id(header, row, sheet_row_number, duplicate_emails)
+            row_id_preview = _derive_row_id(
+                header, row, sheet_row_number, duplicate_emails, program_config=config.program_config,
+            )
             effective_force = force or target_row_number is not None
             if checkpoint.is_done(row_id_preview) and not effective_force:
                 continue

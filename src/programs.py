@@ -154,6 +154,26 @@ class ProgramConfig:
     # Fellowship/R2B: 0 (data starts immediately after the header row).
     # Fellowship V2: 1 (row 2 is a sub-header row; real data starts at row 3).
     data_start_offset: int = 0
+    # Optional override for the sheet column that holds the applicant/
+    # startup's name — used by pipeline.py for no-show detection (a human
+    # types a marker like "won't pitch" directly into this cell), R2B's
+    # wrong-video-segment tripwire note, and duplicate-email
+    # disambiguation (see _resolve_name_column_index/_find_name_column_index
+    # and _derive_row_id). Default None preserves today's behavior: the
+    # pipeline GUESSES this column via a substring hint list
+    # (_NAME_COLUMN_HINTS = "startup name"/"company name"/"team name"/
+    # "project name") that assumes every program's sheet names applicants
+    # after their startup/company/team. That assumption doesn't hold for
+    # every program — Fellowship V2's own sheet, as of this session, uses
+    # a "participant name"-style header the hint list has never covered.
+    # Rather than hardcode yet another guess string per program, this is a
+    # SELECTABLE column, same UI pattern as score_column_name/
+    # reasoning_column_name/criterion_column_names above (see app.py's
+    # "Column mapping" sidebar section and Config.from_env's
+    # name_column_override) — settable per run without editing this file.
+    # None here (the default for every program below) means "keep
+    # guessing via the hint list," unchanged from today.
+    name_column_name: str | None = None
     # Per-program header exclusions for _build_raw_row_text: columns whose
     # header name is in excluded_header_names, OR whose lowercased header
     # contains any substring in excluded_header_substrings, are dropped from
