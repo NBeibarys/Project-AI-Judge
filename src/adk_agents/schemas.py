@@ -265,29 +265,45 @@ class FellowshipV2HeadScore(BaseModel):
     Same purpose as R2BHeadScore but with explicit field names so Gemini
     knows exactly what keys to fill. Generic dict[str, int] produces empty
     results because the model doesn't know the criterion names.
+
+    Field order matters here, not just the prompt text: structured-output
+    generation follows field declaration order, so each criterion's
+    rationale field is declared immediately before its score field
+    (matching R2BHeadScoreNamed's/AlchemistHeadScore's pattern) — an
+    earlier version of this schema listed all 9 scores first and all 9
+    rationales after, which silently contradicted its own
+    "rationale-before-score" claim in FELLOWSHIP_V2_HEAD_INSTRUCTION.
     """
-    Originality: int = Field(ge=1, le=10)
-    Approach: int = Field(ge=1, le=10)
-    Personal_connection: int = Field(ge=1, le=10)
-    Concreteness: int = Field(ge=1, le=10)
-    Credibility_in_context: int = Field(ge=1, le=10)
-    Trajectory: int = Field(ge=1, le=10)
-    Program_fit: int = Field(ge=1, le=10)
-    Regional_relevance: int = Field(ge=1, le=10)
-    Communication_quality: int = Field(ge=1, le=10)
     Originality_rationale: str = Field(min_length=1)
+    Originality: int = Field(ge=1, le=10)
     Approach_rationale: str = Field(min_length=1)
+    Approach: int = Field(ge=1, le=10)
     Personal_connection_rationale: str = Field(min_length=1)
+    Personal_connection: int = Field(ge=1, le=10)
     Concreteness_rationale: str = Field(min_length=1)
+    Concreteness: int = Field(ge=1, le=10)
     Credibility_in_context_rationale: str = Field(min_length=1)
+    Credibility_in_context: int = Field(ge=1, le=10)
     Trajectory_rationale: str = Field(min_length=1)
+    Trajectory: int = Field(ge=1, le=10)
     Program_fit_rationale: str = Field(min_length=1)
+    Program_fit: int = Field(ge=1, le=10)
     Regional_relevance_rationale: str = Field(min_length=1)
+    Regional_relevance: int = Field(ge=1, le=10)
     Communication_quality_rationale: str = Field(min_length=1)
+    Communication_quality: int = Field(ge=1, le=10)
     final_score: float = Field(ge=1, le=10)
     override: float = Field(default=0.0, ge=-1.0, le=1.0)
     override_reasoning: str = ""
     confidence: Literal["low", "medium", "high"]
+    # See R2BHeadScore disqualification fields — same contract.
+    contradiction_found: bool = False
+    contradiction_reason: str = ""
+    disqualifying_issue_found: bool = False
+    disqualifying_issue_type: Literal[
+        "none", "fraud", "suspicious_application"
+    ] = "none"
+    disqualifying_issue_reason: str = ""
 
     def to_head_score(self) -> "R2BHeadScore":
         """Convert to the generic R2BHeadScore format for averaging."""
@@ -318,6 +334,11 @@ class FellowshipV2HeadScore(BaseModel):
             override=self.override,
             override_reasoning=self.override_reasoning,
             confidence=self.confidence,
+            contradiction_found=self.contradiction_found,
+            contradiction_reason=self.contradiction_reason,
+            disqualifying_issue_found=self.disqualifying_issue_found,
+            disqualifying_issue_type=self.disqualifying_issue_type,
+            disqualifying_issue_reason=self.disqualifying_issue_reason,
         )
 
 

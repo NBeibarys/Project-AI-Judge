@@ -102,9 +102,10 @@ def cancel_all_active() -> None:
 DEFAULT_N_SAMPLES = 3
 # Cap LLM calls per sample:
 #   Verify loop: analyst + grader × ProgramConfig.max_verify_iterations —
-#   6 worst case for Alchemist/Fellowship V2 (3 iterations), 4 for R2B
-#   (2 iterations, lowered since both agents re-process the full pitch
-#   video every iteration). 20 gives headroom without being unbounded.
+#   4 worst case for every program now (2 iterations each; R2B, Alchemist,
+#   and Fellowship V2 all lowered this since the analyst/grader re-process
+#   the full video/deck every iteration). 20 gives headroom without being
+#   unbounded.
 #   Head: 1 call per run × N_SAMPLES.
 MAX_LLM_CALLS_R2B_VERIFY = 20
 MAX_LLM_CALLS_HEAD = 2
@@ -368,6 +369,11 @@ class AdkReviewWorkflow:
             "override": flat.get("override", 0.0),
             "override_reasoning": flat.get("override_reasoning", ""),
             "confidence": flat.get("confidence", "medium"),
+            "contradiction_found": flat.get("contradiction_found", False),
+            "contradiction_reason": flat.get("contradiction_reason", ""),
+            "disqualifying_issue_found": flat.get("disqualifying_issue_found", False),
+            "disqualifying_issue_type": flat.get("disqualifying_issue_type", "none"),
+            "disqualifying_issue_reason": flat.get("disqualifying_issue_reason", ""),
         }
 
     def _convert_alchemist_head(self, flat: dict) -> dict:
@@ -601,14 +607,15 @@ class AdkReviewWorkflow:
         # call — see video_ingestion.py), so N_SAMPLES concurrent calls
         # meant up to N_SAMPLES x that payload in flight at once through
         # the same shared API client — all 3 samples failed simultaneously
-        # with `400 INVALID_ARGUMENT`. head_include_media=False (R2B only;
-        # see ProgramConfig) fixes this at the root instead of working
-        # around it: the Head no longer receives the video Part at all
-        # (see _build_parts's include_media), so each call's payload is
-        # just text — parallelizing it is now safe by construction, not
-        # by luck. Alchemist/Fellowship V2 keep head_include_media=True
-        # (their Head still needs media — see ProgramConfig's field doc),
-        # so they stay on the sequential path that's already proven safe.
+        # with `400 INVALID_ARGUMENT`. head_include_media=False fixes this
+        # at the root instead of working around it: the Head no longer
+        # receives the video/deck Part at all (see _build_parts's
+        # include_media), so each call's payload is just text —
+        # parallelizing it is safe by construction, not by luck. R2B,
+        # Alchemist, and Fellowship V2 (2026-07-21 session) all set this
+        # False now, so every program takes the parallel path below; a
+        # future program that sets head_include_media=True would fall
+        # back to the sequential branch, which stays here for that case.
         async def _run_sample(i: int) -> dict:
             try:
                 return await self._run_head_once(state, approved_evidence, i)

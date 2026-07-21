@@ -97,22 +97,26 @@ class ProgramConfig:
     # the analyst's text evidence report (which the grader already
     # approved). The grader is UNAFFECTED by this flag — it always sees
     # media, since it's the one doing verification. Default True preserves
-    # existing behavior: Alchemist's Head runs its own redundant fraud/
-    # contradiction check against the actual sources (see
-    # ALCHEMIST_HEAD_INSTRUCTION's DISQUALIFICATION CHECK), and Fellowship
-    # V2's Head scores Communication_quality partly from direct audio/
-    # visual cues (teleprompter, dubbing mismatch, eyes off-screen) that a
-    # text summary can't convey — both need media. R2B sets this False:
-    # the Head "scores only," never re-verifies (that's the grader's job,
-    # which still has full video access) — see R2B_HEAD_INSTRUCTION's "Do
-    # not re-verify; assume the evidence is approved and grounded." The
-    # Head is also the one re-run N_SAMPLES times per row, so this is
-    # where the video-payload-duplication cost (and the concurrency
-    # failure it caused) actually lives. Confirmed via git blame that
-    # "Head sees raw media" was never a deliberate Alchemist choice — it
-    # was introduced in R2B's original commit and inherited by every
-    # uses_separate_head=True program through the shared _run_head_once
-    # function.
+    # the ORIGINAL behavior of every program before this flag existed
+    # (Alchemist's Head used to run its own redundant fraud/contradiction
+    # check against the actual sources, and Fellowship V2's Head used to
+    # score Communication_quality partly from direct audio/visual cues).
+    # R2B sets this False: the Head "scores only," never re-verifies
+    # (that's the grader's job, which still has full video access) — see
+    # R2B_HEAD_INSTRUCTION's "Do not re-verify; assume the evidence is
+    # approved and grounded." Alchemist and Fellowship V2 (2026-07-21
+    # session) now also set this False, aligned with R2B: in both cases the
+    # analyst's written evidence already reports the cues the Head used to
+    # need media for directly (Alchemist's cross-source contradiction check,
+    # Fellowship's teleprompter/dubbing/eye-contact observations for
+    # Communication_quality), so a redundant media-reading Head pass adds
+    # cost without adding signal. The Head is also the one re-run N_SAMPLES
+    # times per row, so this is where the video-payload-duplication cost
+    # (and the concurrency failure it caused) actually lives. Confirmed via
+    # git blame that "Head sees raw media" was never a deliberate Alchemist
+    # choice — it was introduced in R2B's original commit and inherited by
+    # every uses_separate_head=True program through the shared
+    # _run_head_once function.
     head_include_media: bool = True
     # Thinking level for the grader and Head, set explicitly per program
     # rather than derived from head_include_media or hardcoded. These used
@@ -184,12 +188,39 @@ FELLOWSHIP_V2_CONFIG = ProgramConfig(
     source_priority="video_primary",
     uses_separate_head=True,
     head_instruction=FELLOWSHIP_V2_HEAD_INSTRUCTION,
-    # Explicit (not just relying on the ProgramConfig default): Head sees
-    # audio/visual cues directly (see head_include_media's field comment),
-    # so it keeps HIGH thinking for analyst, grader, and Head.
+    # Aligned with R2B/Alchemist (2026-07-21 session): the Head scores from
+    # the analyst's approved text evidence only, not the raw video — the
+    # grader (which still sees full media) already verified it. The
+    # Communication_quality cues that used to justify head_include_media=True
+    # (teleprompter, eyes off-screen, dubbing mismatch) are already captured
+    # in the analyst's written evidence (see FELLOWSHIP_V2_ANALYST_INSTRUCTION's
+    # "For Communication quality, describe what you actually observe..."), so
+    # the Head can score from that description alone, exactly like R2B's Head
+    # already does for its Presentation & Clarity criterion. Not yet
+    # separately live-tested for Fellowship's own rubric; worth validating
+    # against a few real rows, same as Alchemist's own note on this tradeoff.
+    head_include_media=False,
+    # Explicit, not derived from head_include_media (see ProgramConfig's
+    # field comment) — set to LOW to match R2B's validated media-less-Head
+    # config; watch the first several real rows given the tradeoff noted
+    # above hasn't been separately tested for this rubric.
     analyst_thinking_level="HIGH",
     grader_thinking_level="HIGH",
-    head_thinking_level="HIGH",
+    head_thinking_level="LOW",
+    # Aligned with R2B/Alchemist (2026-07-21 session): a confirmed
+    # contradiction no longer auto-zeroes the score. It penalizes the
+    # relevant criterion/criteria instead and flags the row for human
+    # review — zeroing is the human reviewer's call, not automatic.
+    # Previously True (Fellowship V2's original behavior); revisit if this
+    # proves too lenient in practice, same as R2B's own tuning history for
+    # this flag.
+    contradiction_auto_zero=False,
+    # Aligned with R2B/Alchemist: same latency-driven cap (most rows
+    # converge in 1-2 rounds for R2B; the third iteration was the tail
+    # case there). Not yet separately live-tested for Fellowship V2's own
+    # convergence behavior — revisit if Fellowship rows start needing the
+    # third round more often than R2B's/Alchemist's did.
+    max_verify_iterations=2,
     sheet_id_env="FELLOWSHIP_V2_SHEET_ID",
     sheet_range_env="FELLOWSHIP_V2_SHEET_RANGE",
     header_row_env="FELLOWSHIP_V2_HEADER_ROW",
