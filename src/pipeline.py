@@ -12,10 +12,13 @@ shared state between applicants — so a ThreadPoolExecutor is sufficient;
 no need for asyncio's added complexity for what's mostly I/O-bound work
 (API calls) anyway.
 """
+import asyncio
 import json
 import re
+import threading
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import CancelledError as FutureCancelledError
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from urllib.parse import urlparse
 
 from .checkpoint import Checkpoint
@@ -46,6 +49,24 @@ from .round_segments import (
 # blindly and escalate to human review instead — matches the "3 attempts"
 # convention used elsewhere in this codebase (e.g. R2B's verify loop).
 FAILURE_ESCALATION_THRESHOLD = 3
+
+# How often run_batch's completion loop re-checks cancel_event when nothing
+# has finished yet. Only affects how quickly a Stop click is noticed while
+# every in-flight row is still running — a genuinely completed future is
+# always noticed immediately regardless of this value (see the
+# concurrent.futures.wait() call in run_batch).
+CANCEL_CHECK_INTERVAL_SECONDS = 0.5
+
+
+class RowCancelled(Exception):
+    """Raised by process_row when cancel_event is set mid-row.
+
+    A deliberate stop (the Streamlit Stop button), not a scored failure —
+    run_batch's completion handling must treat this the same as the
+    existing no-show "deliberate skip" path: no checkpoint entry, no sheet
+    write, not counted as an error.
+    """
+
 
 def _normalize_for_match(text: str) -> str:
     """Strip accents — used only for email-column detection, where ASCII
@@ -335,7 +356,13 @@ def process_row(
     *,
     force: bool = False,
     duplicate_emails: frozenset = frozenset(),
+    cancel_event: "threading.Event | None" = None,
 ):
+    def _raise_if_cancelled() -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise RowCancelled("Grading was cancelled before this row completed.")
+
+    _raise_if_cancelled()
     row_id = _derive_row_id(header, row, sheet_row_number, duplicate_emails)
     if checkpoint.is_done(row_id) and not force:
         return row_id, None  # already graded in a prior run, nothing to write
@@ -371,6 +398,8 @@ def process_row(
         ),
         "retry_count": 0,
     }
+
+    _raise_if_cancelled()
 
     # Alchemist: pitch deck is required and is checked FIRST, before any
     # video resolution is even attempted. If no pitch deck URL is submitted,
@@ -435,6 +464,8 @@ def process_row(
                 "human_review_flag": True,
                 "skipped_no_pitch_deck": True,
             }
+
+    _raise_if_cancelled()
 
     submitted_video_url = _submitted_video_url(header, row)
     if submitted_video_url:
@@ -586,6 +617,8 @@ def process_row(
             "No video URL submitted or video could not be resolved.",
         )
 
+    _raise_if_cancelled()
+
     no_fallback_without_video = bool(config.program_config.criterion_column_names)
     try:
         final_state = workflow.invoke(initial_state)
@@ -601,6 +634,13 @@ def process_row(
             final_state = _retry_without_video(workflow, initial_state, exc)
         else:
             raise
+
+    # One last check before handing back a completed result: run_batch
+    # writes to the sheet and marks the checkpoint immediately after this
+    # function returns, so this is the last point cancellation can still
+    # stop that write/mark from happening for this row.
+    _raise_if_cancelled()
+
     final_result = final_state.get("final_result", {})
     score = final_result.get("score")
     raw_reasoning = final_result.get("reasoning", "")
@@ -796,6 +836,7 @@ def run_batch(
     limit: int | None = None,
     on_progress=None,
     target_row_number: int | None = None,
+    cancel_event: "threading.Event | None" = None,
 ):
     """Run the batch. on_progress(done, total, row_id, ok), if given, is
     called synchronously on the calling thread right after each row
@@ -810,6 +851,15 @@ def run_batch(
     for the whole batch. Applies uniformly to every program (no
     program-specific gating) since row-number addressing is generic sheet
     geometry, not a program-specific concept.
+
+    cancel_event, when given, is threaded through to every process_row call
+    so an in-progress row can cooperatively bail out (see RowCancelled).
+    Rows already cancelled this way (or cancelled at the asyncio level via
+    adk_agents.workflow.cancel_all_active()) are treated as a deliberate
+    skip in the completion loop below, same as a no-show — not a scored
+    failure. Once cancel_event is observed set, the executor is shut down
+    with cancel_futures=True so any row not yet started is dropped instead
+    of still being launched.
     """
     sheets_service = get_sheets_service(config.service_account_path)
     checkpoint = Checkpoint(config.checkpoint_path)
@@ -854,7 +904,19 @@ def run_batch(
     # max_workers bounded by config rather than len(rows) — uncapped
     # concurrency against the Gemini API at 100+ rows risks hitting
     # rate limits and burning retries on 429s instead of real work.
-    with ThreadPoolExecutor(max_workers=config.max_concurrency) as pool:
+    #
+    # Explicit lifecycle instead of `with ThreadPoolExecutor(...) as pool:`:
+    # that context manager's default teardown (shutdown(wait=True)) blocks
+    # on exit until every already-submitted future finishes — including
+    # ones not yet even started — which would make a kill signal wait out
+    # the whole remaining queue anyway. Managing shutdown() ourselves lets
+    # a kill signal drop not-yet-started futures immediately instead (see
+    # cancel_futures=True below); the `finally` still guarantees the pool
+    # is shut down on every path (success, exception, or cancellation) so
+    # nothing leaks.
+    pool = ThreadPoolExecutor(max_workers=config.max_concurrency)
+    pool_shutdown_for_cancel = False
+    try:
         futures = {}
         submitted = 0
         for i, row in enumerate(rows):
@@ -878,12 +940,16 @@ def run_batch(
                 checkpoint,
                 force=effective_force,
                 duplicate_emails=duplicate_emails,
+                cancel_event=cancel_event,
             )
             futures[future] = (row_id_preview, sheet_row_number)
 
         done_count = 0
-        for future in as_completed(futures):
-            row_id, sheet_row_number = futures[future]
+
+        def _handle_completed_future(future, row_id, sheet_row_number):
+            # future is guaranteed done() here (by every caller below), so
+            # every branch of this call is non-blocking.
+            nonlocal done_count
             ok = False
             skipped = False
             try:
@@ -895,25 +961,42 @@ def run_batch(
                     # confirmed live, a batch with 11 no-shows displayed
                     # "13 failed" when only 2 rows genuinely failed.
                     skipped = True
-                    continue
-                if config.program_config.criterion_column_names:
-                    write_multi_row_result(
-                        sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                        col_map, result["criterion_scores"], result["total_score"],
-                        result["notes"],
-                    )
                 else:
-                    write_row_result(
-                        sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                        col_map, result["score"], result["reasoning"],
+                    if config.program_config.criterion_column_names:
+                        write_multi_row_result(
+                            sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+                            col_map, result["criterion_scores"], result["total_score"],
+                            result["notes"],
+                        )
+                    else:
+                        write_row_result(
+                            sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+                            col_map, result["score"], result["reasoning"],
+                        )
+                    # Failed writes remain retryable rather than becoming lost grades.
+                    checkpoint.mark_done(
+                        row_id,
+                        result["human_review_flag"],
                     )
-                # Failed writes remain retryable rather than becoming lost grades.
-                checkpoint.mark_done(
-                    row_id,
-                    result["human_review_flag"],
-                )
-                results[row_id] = result
-                ok = True
+                    results[row_id] = result
+                    ok = True
+            except (RowCancelled, asyncio.CancelledError, FutureCancelledError):
+                # Deliberate cancellation (the Streamlit Stop button) — the
+                # same "deliberate skip" bucket as a no-show, not a scored
+                # failure: no checkpoint entry, no sheet write. Covers all
+                # three cancellation shapes that can reach here: process_row
+                # itself raising RowCancelled, asyncio.CancelledError
+                # escaping workflow.invoke (cancel_all_active() cancelled
+                # the in-flight asyncio Task), and concurrent.futures' own
+                # CancelledError — raised by future.result() itself,
+                # synchronously and without blocking, for a future dropped
+                # by the cancel_futures=True shutdown below before it ever
+                # started (Future.result() checks the CANCELLED state
+                # directly rather than going through the waiter machinery
+                # that as_completed()/wait() rely on — see the long
+                # comment on the completion loop below for why that
+                # distinction matters here).
+                skipped = True
             except Exception as exc:  # noqa: BLE001 — isolate each applicant failure
                 # Provider messages may echo submitted PII, so persist only its type.
                 attempts = checkpoint.mark_failed(row_id, type(exc).__name__)
@@ -943,12 +1026,77 @@ def run_batch(
                             col_map, "", reasoning,
                         )
                     checkpoint.mark_done(row_id, True)
-            finally:
-                done_count += 1
-                if on_progress is not None:
-                    on_progress(
-                        done_count, submitted, row_id,
-                        None if skipped else ok,
-                    )
+            done_count += 1
+            if on_progress is not None:
+                on_progress(
+                    done_count, submitted, row_id,
+                    None if skipped else ok,
+                )
+
+        # Not `for future in as_completed(futures):` — a future that is
+        # still QUEUED (submitted but not yet handed to a worker thread)
+        # when pool.shutdown(cancel_futures=True) below cancels it can
+        # structurally never be yielded by as_completed(), and the same is
+        # true of concurrent.futures.wait() used the "obvious" way. Root
+        # cause, from concurrent.futures/_base.py: shutdown()'s cancel
+        # loop calls future.cancel() directly on each still-queued work
+        # item, which only sets Future state to CANCELLED and runs
+        # add_done_callback callbacks — it does NOT reach
+        # set_running_or_notify_cancel(), the only method that both
+        # transitions a future to CANCELLED_AND_NOTIFIED *and* notifies
+        # any waiter registered on it (that method is called exclusively
+        # from inside _WorkItem.run(), which a work item pulled straight
+        # off the queue by shutdown() never reaches). as_completed() and
+        # wait() both key off CANCELLED_AND_NOTIFIED/FINISHED — never
+        # plain CANCELLED — so a waiter registered on one of these futures
+        # simply never fires; as_completed()'s internal `while pending:`
+        # loop then blocks forever. Future.done()/.cancelled(), by
+        # contrast, correctly check for CANCELLED too, and future.result()
+        # checks CANCELLED directly and raises immediately without
+        # blocking — so this loop uses wait() only as a bounded-timeout
+        # "has anything happened" signal, and always re-verifies via
+        # .done() before deciding a future still needs waiting on.
+        pending = set(futures)
+        while pending:
+            if (
+                not pool_shutdown_for_cancel
+                and cancel_event is not None
+                and cancel_event.is_set()
+            ):
+                # Kill signal observed: drop every future that hasn't
+                # started yet instead of still launching it. Futures
+                # already running keep going briefly — they're cancelled
+                # cooperatively via cancel_event/cancel_all_active(), not
+                # by this call — but nothing new starts after this point.
+                pool.shutdown(wait=False, cancel_futures=True)
+                pool_shutdown_for_cancel = True
+
+            # wait() is given a bounded timeout so it always returns
+            # (rather than potentially blocking forever per the comment
+            # above) and so cancel_event is re-checked promptly even when
+            # nothing has finished yet. A future that completes normally
+            # is still noticed immediately — FIRST_COMPLETED wakes wait()
+            # as soon as anything finishes, the timeout only bounds the
+            # "nothing has happened yet" case.
+            done_now, not_done_now = wait(
+                pending, timeout=CANCEL_CHECK_INTERVAL_SECONDS, return_when=FIRST_COMPLETED,
+            )
+            # wait()'s own bookkeeping mislabels cancelled-while-queued
+            # futures as "not done" (see the long comment above) — recheck
+            # each of those directly via .done(), which is accurate.
+            truly_done = done_now | {f for f in not_done_now if f.done()}
+            if not truly_done:
+                continue
+            for future in truly_done:
+                pending.discard(future)
+                row_id, sheet_row_number = futures[future]
+                _handle_completed_future(future, row_id, sheet_row_number)
+    finally:
+        # Always shut down — wait=True (block until whatever's still
+        # running finishes) unless a kill signal already triggered the
+        # wait=False/cancel_futures=True shutdown above, in which case
+        # calling shutdown() again is a safe no-op (ThreadPoolExecutor
+        # tolerates repeated shutdown() calls).
+        pool.shutdown(wait=not pool_shutdown_for_cancel)
 
     return {"graded": results, "errors": errors}

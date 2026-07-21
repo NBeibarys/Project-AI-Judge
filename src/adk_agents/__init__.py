@@ -7,7 +7,7 @@ Exports are lazy: importing ``adk_agents.prompts`` or
 ``AdkReviewWorkflow`` by the batch pipeline — both are resolved on first
 access via ``__getattr__``.
 """
-__all__ = ["AdkReviewWorkflow", "app", "root_agent"]
+__all__ = ["AdkReviewWorkflow", "cancel_all_active", "app", "root_agent"]
 
 
 def __getattr__(name):
@@ -19,4 +19,8 @@ def __getattr__(name):
         from .workflow import AdkReviewWorkflow
 
         return AdkReviewWorkflow
+    if name == "cancel_all_active":
+        from .workflow import cancel_all_active
+
+        return cancel_all_active
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

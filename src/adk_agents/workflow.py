@@ -62,6 +62,36 @@ def _thread_event_loop() -> asyncio.AbstractEventLoop:
         _thread_local.loop = loop
     return loop
 
+
+# Kill-in-flight-grading support: every row currently inside invoke() is
+# registered here as (loop, task) keyed by row_id, guarded by _active_lock.
+# cancel_all_active() is the near-instant kill path for the Streamlit Stop
+# button — it schedules task.cancel() on each row's OWN loop via
+# call_soon_threadsafe (task.cancel() itself is not thread-safe to call
+# directly from another thread; call_soon_threadsafe is), which raises
+# asyncio.CancelledError inside the row's in-flight Gemini/ADK call almost
+# immediately, rather than waiting for that call to finish naturally.
+_active_tasks: dict[str, tuple[asyncio.AbstractEventLoop, "asyncio.Task"]] = {}
+_active_lock = threading.Lock()
+
+
+def cancel_all_active() -> None:
+    """Cancel every row currently inside AdkReviewWorkflow.invoke().
+
+    Safe to call from any thread (e.g. the Streamlit script thread reacting
+    to a Stop click) — each task is cancelled on its own row's event loop via
+    call_soon_threadsafe, never by touching the task directly from this
+    thread. Clears the registry afterward; invoke()'s own `finally` also
+    unregisters each row as it exits, so this is a belt-and-suspenders
+    sweep for whatever is still in flight at the moment Stop is clicked.
+    """
+    with _active_lock:
+        entries = list(_active_tasks.values())
+        _active_tasks.clear()
+    for loop, task in entries:
+        loop.call_soon_threadsafe(task.cancel)
+
+
 # Default number of Head samples to run and average. The literature
 # (arXiv:2606.26185, Perea multi-judge playbook) recommends 2-3 samples;
 # 3 is the deployed default (see config.py's N_SAMPLES env var), balancing
@@ -619,7 +649,15 @@ class AdkReviewWorkflow:
 
     def invoke(self, state: dict) -> dict:
         loop = _thread_event_loop()
-        return loop.run_until_complete(self._invoke_async(state))
+        task = loop.create_task(self._invoke_async(state))
+        row_id = state.get("row_id") or f"anon_{id(task)}"
+        with _active_lock:
+            _active_tasks[row_id] = (loop, task)
+        try:
+            return loop.run_until_complete(task)
+        finally:
+            with _active_lock:
+                _active_tasks.pop(row_id, None)
 
 
 def _as_dict(value) -> dict:

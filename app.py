@@ -16,16 +16,20 @@ import hashlib
 import json
 import os
 import sys
+import threading
+import time
 
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
+from streamlit.runtime.scriptrunner_utils.exceptions import StopException
 
 _REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_REPO_DIR, ".env"))
 if _REPO_DIR not in sys.path:
     sys.path.insert(0, _REPO_DIR)
 
+from src.adk_agents import cancel_all_active
 from src.config import Config
 from src.pipeline import run_batch, _derive_row_id, _find_duplicate_emails
 from src.programs import get_program_config
@@ -240,40 +244,138 @@ if run_clicked or test_row_clicked:
     # a blank progress area with zero feedback that anything is happening
     # at all, easily read as "stuck". Show something immediately instead.
     status_text.text("Starting — resolving sheet rows and launching grading…")
-    ok_count = 0
-    fail_count = 0
-    skip_count = 0
+
+    # run_batch runs on a background thread instead of blocking this script
+    # thread directly. Why: Streamlit's Stop button is purely cooperative —
+    # a pending stop request is only checked and raised (StopException) when
+    # the script itself makes an st.* call (each is the only kind of
+    # "yield point" the script runner checks). A direct, blocking run_batch
+    # call makes zero st.* calls of its own, so Stop could never fire at
+    # all for a single-row test grade, and for a multi-row batch could only
+    # fire between completed rows. Running it on its own thread lets this
+    # (main, script) thread poll on a short interval and call real st.*
+    # methods every ~0.5s — genuine yield points — while the batch is still
+    # in flight, so Stop actually has somewhere to interrupt.
+    #
+    # cancel_event/`shared` cross the thread boundary deliberately: the
+    # background thread NEVER calls any st.* function itself (unsupported/
+    # unsafe off the script thread) — it only ever writes into `shared`
+    # under `shared_lock`; only this main thread's poll loop below reads
+    # `shared` and makes the actual st.* calls.
+    cancel_event = threading.Event()
+    shared_lock = threading.Lock()
+    shared = {
+        "done": 0,
+        "total": 0,
+        "ok_count": 0,
+        "fail_count": 0,
+        "skip_count": 0,
+        "result": None,
+        "exc": None,
+        "finished": False,
+    }
 
     def _on_progress(done, total, row_id, ok):
-        global ok_count, fail_count, skip_count
-        # ok=None means deliberately skipped (no-show, or already graded) —
-        # neither a grade nor a failure. Without the separate bucket, a
-        # batch with 11 no-shows displayed "13 failed" when only 2 rows
-        # genuinely failed (confirmed live).
-        if ok is None:
-            skip_count += 1
-        elif ok:
-            ok_count += 1
-        else:
-            fail_count += 1
-        progress_bar.progress(done / total if total else 1.0)
-        status_text.text(
-            f"{done}/{total} processed — {ok_count} graded, "
-            f"{skip_count} skipped (no-show / already graded), "
-            f"{fail_count} failed"
-        )
+        # Called synchronously on the background thread by run_batch —
+        # must not touch any st.* call here (see note above).
+        with shared_lock:
+            shared["done"] = done
+            shared["total"] = total
+            # ok=None means deliberately skipped (no-show, already graded,
+            # or cancelled) — neither a grade nor a failure. Without the
+            # separate bucket, a batch with 11 no-shows displayed
+            # "13 failed" when only 2 rows genuinely failed (confirmed live).
+            if ok is None:
+                shared["skip_count"] += 1
+            elif ok:
+                shared["ok_count"] += 1
+            else:
+                shared["fail_count"] += 1
 
-    if test_row_clicked:
-        result = run_batch(
-            config, force=True, limit=1, on_progress=_on_progress,
-            target_row_number=int(test_row_number),
+    def _run_batch_worker():
+        try:
+            if test_row_clicked:
+                result = run_batch(
+                    config, force=True, limit=1, on_progress=_on_progress,
+                    target_row_number=int(test_row_number),
+                    cancel_event=cancel_event,
+                )
+            else:
+                result = run_batch(
+                    config, force=force, limit=int(limit), on_progress=_on_progress,
+                    cancel_event=cancel_event,
+                )
+            with shared_lock:
+                shared["result"] = result
+        except Exception as exc:  # noqa: BLE001 — surfaced on the main thread below
+            with shared_lock:
+                shared["exc"] = exc
+        finally:
+            with shared_lock:
+                shared["finished"] = True
+
+    worker_thread = threading.Thread(target=_run_batch_worker, daemon=True)
+    worker_thread.start()
+
+    try:
+        while True:
+            with shared_lock:
+                done = shared["done"]
+                total = shared["total"]
+                ok_count = shared["ok_count"]
+                skip_count = shared["skip_count"]
+                fail_count = shared["fail_count"]
+                finished = shared["finished"]
+            # Each of these two calls is a real st.* yield point — this is
+            # what makes Stop actually checkable while run_batch is still
+            # running on the background thread.
+            progress_bar.progress(done / total if total else 0.0)
+            if total:
+                status_text.text(
+                    f"{done}/{total} processed — {ok_count} graded, "
+                    f"{skip_count} skipped (no-show / already graded), "
+                    f"{fail_count} failed"
+                )
+            else:
+                status_text.text("Starting — resolving sheet rows and launching grading…")
+            if finished:
+                break
+            time.sleep(0.5)
+        worker_thread.join(timeout=5)
+    except StopException:
+        # The Stop button was clicked. Set the cooperative flag every
+        # process_row call checks, and cancel every in-flight Gemini/ADK
+        # asyncio Task directly (the near-instant path — a row could
+        # otherwise be minutes deep into a single Gemini call with no other
+        # checkpoint to notice cancel_event). Then wait briefly for the
+        # background thread to unwind before reporting back.
+        cancel_event.set()
+        cancel_all_active()
+        worker_thread.join(timeout=5)
+        with shared_lock:
+            ok_count = shared["ok_count"]
+        progress_bar.empty()
+        status_text.empty()
+        st.warning(
+            f"⛔ API request killed — grading stopped ({ok_count} graded "
+            "before cancellation)."
         )
-    else:
-        result = run_batch(
-            config, force=force, limit=int(limit), on_progress=_on_progress
-        )
+        raise
+
     progress_bar.empty()
     status_text.empty()
+
+    with shared_lock:
+        result = shared["result"]
+        exc = shared["exc"]
+
+    if exc is not None:
+        # Re-raise on the main thread so Streamlit's normal uncaught-
+        # exception display handles it exactly as it would have before
+        # run_batch moved to a background thread (an exception raised
+        # directly on the script thread).
+        raise exc
+
     st.success(f"Graded: {len(result['graded'])} | Errors: {len(result['errors'])}")
     if test_row_clicked and not result["graded"] and not result["errors"]:
         st.warning(

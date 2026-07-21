@@ -77,6 +77,18 @@ FILES_API_POLL_TIMEOUT_SECONDS = 300
 FILES_API_POLL_INTERVAL_SECONDS = 3
 # Chunk size for streaming downloads.
 DOWNLOAD_CHUNK_BYTES = 10 * 1024 * 1024
+# _download_drive_file used to have NO timeout at all — the one genuinely
+# unbounded blocking call found across this module (every other network
+# call here — _download_https, _https_content_length,
+# _https_pdf_head_metadata, the Files API upload poll — already has one).
+# A per-chunk timeout, not a total-request one: MediaIoBaseDownload streams
+# DOWNLOAD_CHUNK_BYTES (10MB) at a time via repeated next_chunk() calls, so
+# this bounds how long any single chunk fetch may hang, not the whole
+# (possibly large, legitimately slow) download. Matches
+# FILES_API_POLL_TIMEOUT_SECONDS's 300s ceiling as this file's established
+# "generous but not unbounded" convention for a genuinely slow-but-healthy
+# operation, rather than the short ~15-20s used for HEAD/small requests.
+DRIVE_DOWNLOAD_CHUNK_TIMEOUT_SECONDS = 300
 
 
 def _drive_service(service_account_path: str):
@@ -90,7 +102,15 @@ def _drive_service(service_account_path: str):
     download path; keeping them local avoids importing google.auth and
     googleapiclient at module load when the caller only ever hits the
     HTTPS/Files-API path (the common case for R2B with YouTube links).
+
+    Builds its own httplib2.Http with a timeout (rather than passing
+    credentials= straight to build(), which leaves the underlying HTTP
+    transport with no timeout at all) so every call made through this
+    service — including the streamed download in _download_drive_file — is
+    bounded instead of able to hang forever on a stalled connection.
     """
+    import google_auth_httplib2
+    import httplib2
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
 
@@ -98,11 +118,20 @@ def _drive_service(service_account_path: str):
         service_account_path,
         scopes=["https://www.googleapis.com/auth/drive.readonly"],
     )
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+    authorized_http = google_auth_httplib2.AuthorizedHttp(
+        creds, http=httplib2.Http(timeout=DRIVE_DOWNLOAD_CHUNK_TIMEOUT_SECONDS)
+    )
+    return build("drive", "v3", http=authorized_http, cache_discovery=False)
 
 
 def _download_drive_file(service, file_id: str) -> bytes:
-    """Stream-download a Drive file into memory and return its bytes."""
+    """Stream-download a Drive file into memory and return its bytes.
+
+    Each chunk fetch is bounded by the timeout set on the service's
+    underlying http transport (see _drive_service) — previously this had no
+    timeout at all, so a stalled connection mid-download could hang a
+    worker thread indefinitely.
+    """
     from googleapiclient.http import MediaIoBaseDownload
 
     request = service.files().get_media(fileId=file_id)
