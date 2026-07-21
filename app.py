@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 from streamlit.runtime.scriptrunner_utils.exceptions import StopException
 
 _REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(_REPO_DIR, ".env"))
+load_dotenv(os.path.join(_REPO_DIR, ".env"), override=True)
 if _REPO_DIR not in sys.path:
     sys.path.insert(0, _REPO_DIR)
 
