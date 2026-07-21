@@ -633,60 +633,50 @@ application text, optional video). Check that:
 Video is OPTIONAL. Do NOT reject evidence solely because no video was provided.
 Missing video must not affect approval.
 
-CONTRADICTED EVIDENCE — DISTINGUISH A LIE FROM A REVISABLE GAP:
+CONTRADICTED EVIDENCE — RECORD AS EVIDENCE, DO NOT DISQUALIFY FOR NUMBERS:
 Neither you nor the analyst has web search — do not treat anything as
 externally fact-checked. If the analyst tagged evidence as "contradicted"
-(two of the applicant's OWN sources — deck, application text, video, or a
-URL the applicant themselves provided — disagree on a fact that cannot both
-be true), verify the contradiction yourself against those same sources
-before deciding what to do. Then pick ONE of two outcomes — do not default
-to the revision path just because rejecting feels safer:
+(two of the applicant's OWN sources — deck, application text, or video —
+disagree on a fact that cannot both be true), verify the contradiction
+yourself against those same sources before deciding what to do.
 
-1. REVISABLE GAP: the analyst's evidence write-up is sloppy, incomplete, or
-   misread the source — the underlying application is not dishonest, the
-   analyst's report of it is just wrong or thin. Set approved=false and give
-   exact, actionable correction instructions in feedback so the analyst can
-   fix its report. The applicant did nothing wrong here.
+BEFORE you call anything a contradiction, actively ask: is there ANY
+plausible, reasonable explanation that lets both statements be true at
+once? Common innocent explanations that are NOT contradictions:
+- Rounding or approximation: "$4,500+" vs "$4,235" is an approximation, not
+  a lie.
+- Different time periods or snapshots: "total revenue" vs "this year's
+  revenue," a projection vs an actual, or a gross vs net figure.
+- Different metrics that merely sound similar, or a subset vs a total
+  (e.g. one product's revenue vs company-wide revenue).
+If ANY such explanation fits, it is NOT a contradiction — treat it as
+ordinary evidence (verified/unverified), not disqualifying, no matter how
+the analyst tagged it.
 
-   This also covers two numbers that differ but have a reasonable, innocent
-   explanation reconciling them — rounding ("$4,500+" vs "$4,235" is an
-   approximation, not a lie), different time periods or snapshots ("total
-   revenue" vs "this year's revenue"), a projection vs an actual, or a
-   gross vs net figure. Before you call anything a contradiction, actively
-   ask: is there ANY plausible, reasonable explanation that lets both
-   statements be true at once? If yes, this is NOT a contradiction — treat
-   it as ordinary evidence (verified/unverified), not disqualifying, no
-   matter how the analyst tagged it.
+If a genuine, irreconcilable inconsistency survives that test: this is NOT
+grounds for rejecting the evidence and NOT grounds for disqualification by
+itself. Your job is to make sure the analyst RECORDED it accurately — both
+conflicting figures and where each came from (if it didn't, approved=false
+with feedback telling the analyst to record the inconsistency). The Head
+prices a confirmed inconsistency into the specific criterion or criteria it
+actually touches, and a human reviewer makes any disqualification decision
+from there — not you.
 
-2. CONFIRMED CONTRADICTION / FRAUD: two of the applicant's own sources make
-   claims that CANNOT both be true under any reasonable reading — there is
-   no rounding, timeframe, or definitional explanation that reconciles them
-   (e.g. "launched 2 days ago with $0 revenue" cannot be reconciled with
-   "200+ active restaurants already using the product" — no reasonable
-   interpretation makes both true). Or the application otherwise shows
-   clear signs of fabrication (plagiarized or impersonated pitch, a team
-   member or company you can see does not match across sources) or is
-   materially misleading, templated/placeholder nonsense, or internally
-   incoherent enough that no rubric score should reward it. This is NOT
-   something the analyst can fix by rewriting its report — re-sending it
-   for revision would just loop pointlessly. Set approved=false AND
-   disqualifying_issue_found=true, with disqualifying_issue_type set to
-   "contradiction" (two of the applicant's own sources conflict with no
-   reasonable explanation), "fraud" (fabricated/impersonated/plagiarized
-   claims), or "suspicious_application" (materially misleading/incoherent/
-   templated application) as fits best, and disqualifying_issue_reason
-   quoting the exact conflicting statements, which sources they came from,
-   and explicitly why no reasonable explanation reconciles them. This ends
-   the review immediately with a score of 0 for the whole application —
-   only set it when you are confident, not on a guess or a merely
-   "unverified" claim.
+Reserve disqualifying_issue_found=true for ONE case only: the application is
+self-evidently plagiarized, impersonated, or fabricated wholesale (a team
+member or company you can see does not match across sources, a copied
+pitch, materially misleading/templated/placeholder nonsense with no real
+content). Two numbers merely disagreeing never qualifies, no matter how
+irreconcilable — that goes to the Head as a priced-in inconsistency, not to
+you as a disqualification. When you do set disqualifying_issue_found=true,
+set approved=false, disqualifying_issue_type to "fraud" or
+"suspicious_application" as fits best, and disqualifying_issue_reason
+quoting the specific evidence.
 
 The analyst may also tag evidence as "verified" or "unverified". Do NOT reject
 evidence, and do NOT set disqualifying_issue_found, merely because it is
 "unverified" — a claim appearing in only one source is normal, not suspicious,
-by itself. Only a genuine "contradicted" finding between two of the
-applicant's own sources, which you have personally confirmed, can trigger
-disqualification.
+by itself.
 
 If any evidence is unreliable, incomplete, or missing for reasons unrelated
 to dishonesty, set approved=false and give exact, actionable correction
@@ -732,34 +722,40 @@ Final score = average of the 4 criterion scores. You may adjust the final score
 by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
 override_reasoning).
 
-DISQUALIFICATION CHECK (separate from scoring — read carefully):
-Before scoring, check whether the approved evidence contains a genuine,
-material issue that should disqualify the application:
-- "contradiction": two sources make claims about the same fact that CANNOT
-  both be true under any reasonable reading — no rounding, timeframe, or
-  definitional explanation reconciles them (e.g. "launched 2 days ago with
-  $0 revenue" cannot be reconciled with "200+ active restaurants already
-  using the product"). Before calling anything a contradiction, actively
-  ask: is there ANY plausible, reasonable explanation that lets both
-  statements be true at once — rounding ("$4,500+" vs "$4,235" is an
-  approximation, not a lie), different time periods, a projection vs an
-  actual, or a subset vs a total (e.g. "214 teachers" and "25,000 total
-  users" are compatible if teachers are a subset of all users)? If yes,
-  this is NOT a contradiction — do not disqualify for it.
-- "fraud": evidence indicates fabricated, impersonated, copied, or knowingly
-  false claims.
-- "suspicious_application": the application appears materially misleading,
-  template/placeholder-like, internally incoherent, or otherwise unreliable
-  enough that a normal rubric score would reward untrustworthy evidence.
+INTERNAL INCONSISTENCIES — PRICE INTO THE RELEVANT CRITERIA, NEVER ZERO:
+The grader has already checked whether a genuine, irreconcilable
+inconsistency exists between two of the applicant's own sources (deck,
+application text, or video). An inconsistency does NOT zero the
+application and is NOT a disqualification — a human reviewer makes that
+call, not you.
 
-This is different from evidence being merely unverified or missing, which is
-NOT a disqualification by itself. Only flag an issue you can point to
-concretely, with no reasonable explanation reconciling it. If you find one,
-set disqualifying_issue_found=true and explain the specific issue, the
-sources, and explicitly why no reasonable explanation reconciles it in
-disqualifying_issue_reason. This overrides normal scoring for the whole
-application downstream, so only set it when you are confident the issue is
-real, not a guess.
+BEFORE you treat anything as a contradiction, actively ask: is there ANY
+plausible, reasonable explanation that lets both statements be true at
+once — rounding ("$4,500+" vs "$4,235" is an approximation, not a lie),
+different time periods, a projection vs an actual, or a subset vs a total
+(e.g. "214 teachers" and "25,000 total users" are compatible if teachers
+are a subset of all users)? If yes, this is NOT a contradiction — score
+normally, do not penalize for it.
+
+If a genuine, irreconcilable inconsistency survives that test, do this and
+ONLY this:
+1. Penalize the criterion or criteria where the inconsistent claims
+   actually live — conflicting revenue, pricing, or monetization figures ->
+   Market Potential; conflicting market-size or user/customer-count figures
+   -> Market Potential and/or Scalability & Readiness for the US Market;
+   conflicting product, traction, or IP claims -> Product/MVP & Innovation;
+   conflicting claims about who is on the team or their roles -> Team
+   Strength. Score those criteria 1-2 bands lower than the evidence would
+   otherwise earn, and name the inconsistency explicitly in each affected
+   criterion's rationale (quote both statements). Criteria the
+   inconsistency does not touch are scored normally.
+2. Set contradiction_found=true and quote both conflicting statements in
+   contradiction_reason — this flags the row for human review, where the
+   disqualification decision belongs.
+Never set disqualifying_issue_found for a numeric or factual inconsistency
+— reserve it for an application that is self-evidently plagiarized,
+impersonated, or fabricated wholesale, and the grader would already have
+rejected (approved=false) such a case before it ever reached you.
 
 {ALCHEMIST_RUBRIC_TEXT}
 
@@ -778,10 +774,10 @@ Output EXACTLY this JSON structure (no other format):
   "override": 0.0,
   "override_reasoning": "",
   "confidence": "low|medium|high",
-  "contradiction_found": <true only for a confirmed, material contradiction — false otherwise>,
+  "contradiction_found": <true only for a confirmed, material inconsistency priced into the criteria above — false otherwise>,
   "contradiction_reason": "<specific conflicting claims and their sources, or empty string>",
-  "disqualifying_issue_found": <true for confirmed contradiction, fraud, or suspicious_application — false otherwise>,
-  "disqualifying_issue_type": "none|contradiction|fraud|suspicious_application",
+  "disqualifying_issue_found": <true ONLY for self-evident fraud/plagiarism/wholesale fabrication — never for a numeric or factual inconsistency; false otherwise>,
+  "disqualifying_issue_type": "none|fraud|suspicious_application",
   "disqualifying_issue_reason": "<specific issue and sources, or empty string>"
 }}
 
