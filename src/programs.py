@@ -114,6 +114,23 @@ class ProgramConfig:
     # uses_separate_head=True program through the shared _run_head_once
     # function.
     head_include_media: bool = True
+    # Thinking level for the grader and Head, set explicitly per program
+    # rather than derived from head_include_media or hardcoded. These used
+    # to be coupled (Head's level was inferred from head_include_media;
+    # the grader had no per-program override at all, always HIGH) — now
+    # each program states its own value directly, so head_include_media
+    # only controls whether the Head sees media, nothing else.
+    # Analyst default HIGH preserves existing behavior for every program —
+    # was hardcoded in agent.py until this field existed; now explicit like
+    # the grader and Head.
+    analyst_thinking_level: Literal["LOW", "HIGH"] = "HIGH"
+    # Grader default HIGH preserves existing behavior for every program.
+    grader_thinking_level: Literal["LOW", "HIGH"] = "HIGH"
+    # Head default HIGH preserves Fellowship V2/original Alchemist
+    # behavior; R2B and (now) Alchemist explicitly set LOW below — see
+    # R2B_HEAD_INSTRUCTION/agent.py's build_head_agent for the live A/B
+    # test that validated LOW for a media-less, text-only Head.
+    head_thinking_level: Literal["LOW", "HIGH"] = "HIGH"
     # Head scorer instruction (only used when uses_separate_head=True).
     head_instruction: str = ""
     # Whether a pitch deck PDF is required for this program. When True,
@@ -167,6 +184,12 @@ FELLOWSHIP_V2_CONFIG = ProgramConfig(
     source_priority="video_primary",
     uses_separate_head=True,
     head_instruction=FELLOWSHIP_V2_HEAD_INSTRUCTION,
+    # Explicit (not just relying on the ProgramConfig default): Head sees
+    # audio/visual cues directly (see head_include_media's field comment),
+    # so it keeps HIGH thinking for analyst, grader, and Head.
+    analyst_thinking_level="HIGH",
+    grader_thinking_level="HIGH",
+    head_thinking_level="HIGH",
     sheet_id_env="FELLOWSHIP_V2_SHEET_ID",
     sheet_range_env="FELLOWSHIP_V2_SHEET_RANGE",
     header_row_env="FELLOWSHIP_V2_HEADER_ROW",
@@ -220,6 +243,9 @@ R2B_CONFIG = ProgramConfig(
     total_score_column_name="Total Score",
     notes_column_name="Comments / Notes",
     head_include_media=False,
+    analyst_thinking_level="HIGH",
+    grader_thinking_level="HIGH",
+    head_thinking_level="LOW",
     contradiction_auto_zero=False,
     excluded_header_substrings=(),
     # This round's own output columns must be excluded from what the AI
@@ -253,6 +279,33 @@ ALCHEMIST_CONFIG = ProgramConfig(
     uses_separate_head=True,
     requires_pitch_deck=True,
     head_instruction=ALCHEMIST_HEAD_INSTRUCTION,
+    # Aligned with R2B: same latency-driven cap (most rows converge in
+    # 1-2 rounds; the third iteration was the tail case there). Not yet
+    # separately live-tested for Alchemist's own convergence behavior —
+    # revisit if Alchemist rows start needing the third round more often
+    # than R2B's did.
+    max_verify_iterations=2,
+    # Aligned with R2B (2026-07-20 session): a confirmed contradiction no
+    # longer auto-zeroes the score. It penalizes the relevant criterion/
+    # criteria instead and flags the row for human review — zeroing is the
+    # human reviewer's call, not automatic. Previously True (Alchemist's
+    # original behavior); revisit if this proves too lenient in practice,
+    # same as R2B's own tuning history for this flag.
+    contradiction_auto_zero=False,
+    # Aligned with R2B: the Head scores from the analyst's approved text
+    # evidence only, not the raw deck/video — the grader (which still sees
+    # full media) already verified it. Removes the Head's own redundant
+    # fraud/contradiction re-check against the actual deck — unlike R2B,
+    # this specific tradeoff hasn't been separately live-tested for
+    # Alchemist's rubric; worth validating against a few real rows.
+    head_include_media=False,
+    # Explicit, not derived from head_include_media (see ProgramConfig's
+    # field comment) — set to LOW to match R2B's validated media-less-Head
+    # config; watch the first several real rows given the tradeoff noted
+    # above hasn't been separately tested for this rubric.
+    analyst_thinking_level="HIGH",
+    grader_thinking_level="HIGH",
+    head_thinking_level="LOW",
     sheet_id_env="ALCHEMIST_SHEET_ID",
     sheet_range_env="ALCHEMIST_SHEET_RANGE",
     header_row_env="ALCHEMIST_HEADER_ROW",

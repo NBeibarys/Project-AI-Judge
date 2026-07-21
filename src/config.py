@@ -110,21 +110,20 @@ class Config:
         # checkpoints by email only, with no sheet_id in the key, so this
         # isolation has to happen at the file level instead.
         #
-        # Exception: CHECKPOINT_PATH is honored as-is, but ONLY for
-        # alchemist specifically — its real checkpoint file already tracks
-        # genuine grading progress accumulated over many hours today
-        # (checkpoint_alchemist.json). CHECKPOINT_PATH is a single global
-        # env var with no program name in it, so honoring it for every
-        # program (as an earlier version of this code did) silently made
-        # fellowship_v2/r2b pick up ALCHEMIST's checkpoint file too — a real
-        # bug caught by testing all three programs, not hypothetical.
+        # Every program (including Alchemist, as of this session) uses this
+        # auto-generated path uniformly — no CHECKPOINT_PATH override. A
+        # prior Alchemist-only exception here (honoring a global
+        # CHECKPOINT_PATH env var) caused a real bug: since that var has no
+        # program name in it, honoring it for every program made
+        # fellowship_v2/r2b silently pick up ALCHEMIST's checkpoint file
+        # too. Scoping it to "alchemist only" fixed that particular bug but
+        # kept the underlying fragility (a single global var, easy to
+        # forget/misconfigure); several inconsistent, conflicting
+        # checkpoint_alchemist*.json files accumulated in /tmp as a result,
+        # which is why they were deleted rather than migrated.
         import hashlib
-        explicit_checkpoint = os.environ.get("CHECKPOINT_PATH")
-        if explicit_checkpoint and program == "alchemist":
-            checkpoint_path = explicit_checkpoint
-        else:
-            sheet_hash = hashlib.sha1(sheet_id.encode()).hexdigest()[:10]
-            checkpoint_path = f"checkpoint_{program}_{sheet_hash}.json"
+        sheet_hash = hashlib.sha1(sheet_id.encode()).hexdigest()[:10]
+        checkpoint_path = f"checkpoint_{program}_{sheet_hash}.json"
 
         return cls(
             sheet_id=sheet_id,

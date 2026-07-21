@@ -379,15 +379,22 @@ class AlchemistHeadScore(BaseModel):
     criteria instead of 9). The validator enforces 1-10 integer scores and
     requires rationale for every criterion before the score (rationale-before-
     score CoT). Includes a minor ±1.0 override with written reasoning.
+
+    Field order matters here, not just the prompt text: structured-output
+    generation follows field declaration order, so each criterion's
+    rationale field is declared immediately before its score field
+    (matching R2BHeadScoreNamed's pattern) — an earlier version of this
+    schema listed all 4 scores first and all 4 rationales after, which
+    silently contradicted its own "rationale-before-score" claim above.
     """
-    Product_MVP_Innovation: int = Field(ge=1, le=10)
-    Market_Potential: int = Field(ge=1, le=10)
-    Scalability_US_Market: int = Field(ge=1, le=10)
-    Team_Strength: int = Field(ge=1, le=10)
     Product_MVP_Innovation_rationale: str = Field(min_length=1)
+    Product_MVP_Innovation: int = Field(ge=1, le=10)
     Market_Potential_rationale: str = Field(min_length=1)
+    Market_Potential: int = Field(ge=1, le=10)
     Scalability_US_Market_rationale: str = Field(min_length=1)
+    Scalability_US_Market: int = Field(ge=1, le=10)
     Team_Strength_rationale: str = Field(min_length=1)
+    Team_Strength: int = Field(ge=1, le=10)
     final_score: float = Field(ge=1, le=10)
     override: float = Field(default=0.0, ge=-1.0, le=1.0)
     override_reasoning: str = ""

@@ -335,14 +335,18 @@ def build_root_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             seed=DETERMINISM_SEED,
-            # Explicit HIGH thinking level (Gemini 3.x) rather than the
-            # model's own dynamic/auto reasoning-budget choice. Dynamic
-            # thinking can allocate a different reasoning budget to the same
-            # input across separate runs, which was a likely contributor to
-            # observed run-to-run flakiness in whether the verify loop
-            # converges (same row, same seed, inconsistent outcomes).
+            # Explicit per-program thinking level (Gemini 3.x;
+            # ProgramConfig.analyst_thinking_level) rather than the model's
+            # own dynamic/auto reasoning-budget choice. Dynamic thinking can
+            # allocate a different reasoning budget to the same input across
+            # separate runs, which was a likely contributor to observed
+            # run-to-run flakiness in whether the verify loop converges
+            # (same row, same seed, inconsistent outcomes). Every program
+            # currently sets HIGH, but this is now a knob, not an assumption.
             thinking_config=types.ThinkingConfig(
-                thinking_level=types.ThinkingLevel.HIGH,
+                thinking_level=getattr(
+                    types.ThinkingLevel, program_config.analyst_thinking_level
+                ),
             ),
             # media_resolution intentionally left unspecified: a live A/B
             # test (LOW/MEDIUM/HIGH on the same real R2B row) showed HIGH
@@ -384,8 +388,13 @@ def build_root_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             seed=DETERMINISM_SEED,
+            # Explicit per-program level (ProgramConfig.grader_thinking_level)
+            # rather than hardcoded — every program currently sets HIGH, but
+            # this is now a knob, not an assumption.
             thinking_config=types.ThinkingConfig(
-                thinking_level=types.ThinkingLevel.HIGH,
+                thinking_level=getattr(
+                    types.ThinkingLevel, program_config.grader_thinking_level
+                ),
             ),
             # media_resolution intentionally left unspecified — see the
             # analyst's config above for the A/B test that settled this.
@@ -457,30 +466,33 @@ def build_head_agent(
         generate_content_config=types.GenerateContentConfig(
             temperature=GRADER_TEMPERATURE,
             seed=DETERMINISM_SEED,
-            # thinking_level=LOW for the Head (head_include_media=False,
-            # R2B only) — VALIDATED live, in two stages. Stage 1: LOW
-            # alone (without the Head's instruction pointing at the
-            # analyst's video_notes scratchpad field) showed a systematic
-            # severity bias; pairing LOW with an explicit video_notes
-            # reference in R2B_HEAD_INSTRUCTION recovered baseline quality
-            # across 3 rows (every criterion within ±1 of the HIGH+video
-            # baseline; one disqualification row matched exactly). Stage 2:
-            # restoring the video to the LOW Head was also tested (twice,
-            # same row, same config) and REJECTED — it was unstable across
-            # runs (total 5.67 vs 4.67, single criteria swinging 3 points
-            # between identical invocations, with all 3 within-run samples
-            # agreeing exactly, so N_SAMPLES averaging gives no protection)
-            # and its rationale showed the Head slipping back into
-            # re-verifying grader-approved evidence ("no demo or visual
-            # proof was provided to substantiate") instead of scoring it.
-            # LOW + text-only is the settled config: fastest (~4s/sample
+            # Explicit per-program level (ProgramConfig.head_thinking_level),
+            # not derived from head_include_media — the two used to be
+            # coupled here, but they're independent knobs now (a program
+            # could in principle want head_include_media=False with HIGH
+            # thinking, or vice versa). R2B/Alchemist set LOW — VALIDATED
+            # live for R2B, in two stages. Stage 1: LOW alone (without the
+            # Head's instruction pointing at the analyst's video_notes
+            # scratchpad field) showed a systematic severity bias; pairing
+            # LOW with an explicit video_notes reference in
+            # R2B_HEAD_INSTRUCTION recovered baseline quality across 3 rows
+            # (every criterion within ±1 of the HIGH+video baseline; one
+            # disqualification row matched exactly). Stage 2: restoring the
+            # video to the LOW Head was also tested (twice, same row, same
+            # config) and REJECTED — it was unstable across runs (total
+            # 5.67 vs 4.67, single criteria swinging 3 points between
+            # identical invocations, with all 3 within-run samples agreeing
+            # exactly, so N_SAMPLES averaging gives no protection) and its
+            # rationale showed the Head slipping back into re-verifying
+            # grader-approved evidence ("no demo or visual proof was
+            # provided to substantiate") instead of scoring it. LOW +
+            # text-only is the settled config for R2B: fastest (~4s/sample
             # vs ~150s at HIGH), closest to baseline, and behaviorally
-            # correct for a score-only role.
+            # correct for a score-only role. Alchemist adopts the same LOW
+            # setting but hasn't been separately live-tested this way yet.
             thinking_config=types.ThinkingConfig(
-                thinking_level=(
-                    types.ThinkingLevel.LOW
-                    if program_config.head_include_media is False
-                    else types.ThinkingLevel.HIGH
+                thinking_level=getattr(
+                    types.ThinkingLevel, program_config.head_thinking_level
                 ),
             ),
             # media_resolution intentionally left unspecified — see the

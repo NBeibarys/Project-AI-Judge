@@ -397,6 +397,29 @@ def _https_content_length(url: str) -> Optional[int]:
         return None
 
 
+def _https_pdf_head_metadata(url: str) -> tuple[Optional[str], Optional[int]]:
+    """HEAD request for Content-Type and Content-Length together.
+
+    Used to qualify a direct pitch-deck URL for the no-download fast path
+    below — returns (None, None) on any failure so the caller falls back
+    to the existing, fully-validated download path rather than risk
+    sending an unverified reference to Gemini.
+    """
+    from urllib.request import build_opener, Request
+    from .video_urls import _SafeRedirectHandler
+
+    opener = build_opener(_SafeRedirectHandler())
+    headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
+    req = Request(url, headers=headers, method="HEAD")
+    try:
+        with opener.open(req, timeout=15) as response:
+            content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            length = response.headers.get("Content-Length")
+            return (content_type or None), (int(length) if length is not None else None)
+    except Exception:
+        return None, None
+
+
 def _finalize_downloaded_video(data: bytes, mime_type: str, source: str) -> ResolvedVideo:
     """Shared post-download processing: transcode/shrink for Vertex's inline
     limits, then upload-or-wrap. Used by both the Drive-download and the
@@ -708,7 +731,14 @@ def ingest_pitch_deck(
 ) -> ResolvedVideo:
     """Resolve a submitted pitch deck link for Alchemist grading.
 
-    Handles two source shapes:
+    Handles three source shapes:
+      - Direct HTTPS links to a PDF, confirmed via a HEAD request
+        (Content-Type: application/pdf, size within Gemini's ~14MB direct-
+        fetch limit) — no download at all; Gemini fetches the URI itself,
+        same as Tier-1 video. Trades away chart/table OCR extraction and
+        magic-bytes PDF validation (neither is possible without the
+        bytes) for genuinely direct, download-free ingestion. Falls back
+        to downloading below if the HEAD check doesn't cleanly qualify.
       - Google Slides links (docs.google.com/presentation/d/<ID>/...)
         — converted to a PDF export URL and downloaded via HTTPS.
       - Google Drive file links (drive.google.com/... or open?id=...)
@@ -740,7 +770,24 @@ def ingest_pitch_deck(
                     "share a direct file link instead."
                 )
             else:
-                # Direct HTTPS link to a PDF.
+                # Direct HTTPS link: try the no-download fast path first —
+                # only qualifies with a confirmed application/pdf
+                # Content-Type and a size within Gemini's direct-fetch
+                # limit. Anything uncertain (HEAD fails, wrong/missing
+                # Content-Type, oversized, or unknown size) falls through
+                # to the existing, fully-validated download below.
+                content_type, content_length = _https_pdf_head_metadata(submitted_url)
+                if (
+                    content_type == "application/pdf"
+                    and content_length is not None
+                    and content_length <= VERTEX_URI_FETCH_MAX_BYTES
+                ):
+                    return ResolvedVideo(
+                        uri=submitted_url,
+                        mime_type=PITCH_DECK_MIME_TYPE,
+                        source="pitch_deck_direct",
+                        original_size_bytes=content_length,
+                    )
                 data = _download_https(submitted_url)
 
             if len(data) > FILES_API_MAX_BYTES:
