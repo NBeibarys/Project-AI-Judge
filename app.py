@@ -522,6 +522,16 @@ reasoning_idx = _col_lookup.get(reasoning_col.strip().lower())
 # an operator-selected Name column override too, and otherwise falls back
 # to the same hint-based auto-detect used everywhere else.
 name_idx = _resolve_name_column_index(header, config.program_config)
+# Label the table column with whatever the actual sheet header says
+# (e.g. "Participant Name" for Fellowship V2, "Startup Name" for R2B/
+# Alchemist by default) instead of a hardcoded "Startup" — this is
+# generic across all 3 programs, driven entirely by the resolved Name
+# column, not a per-program assumption.
+name_column_label = (
+    header[name_idx].strip()
+    if name_idx is not None and len(header) > name_idx and header[name_idx].strip()
+    else "Name"
+)
 
 # A blank-score row with a human_review checkpoint status is still a
 # completed grade — the AI finished its 3 review attempts and correctly
@@ -563,7 +573,7 @@ for i, row in enumerate(rows):
         # else: no checkpoint entry yet — not attempted, not a mistake.
 
     table_rows.append({
-        "Startup": name,
+        name_column_label: name,
         "Score": score,
         "Human review": human_review,
     })
