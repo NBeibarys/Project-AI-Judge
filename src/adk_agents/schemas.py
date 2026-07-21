@@ -117,6 +117,31 @@ class FellowshipV2AnalystReport(BaseModel):
     what keys to fill. The generic dict[str, CriterionEvidence] in
     AnalystReport doesn't convey the required keys to the model.
     """
+    # Written FIRST (field order drives generation order in structured
+    # output) — same pattern as R2BAnalystReport.video_notes. Fellowship V2
+    # has both a video AND application text (problem description, results,
+    # how-they-heard, other info), so this is a full walkthrough of BOTH,
+    # not just the video, before the model commits to the 9 strict
+    # per-criterion structured fields below. Mirrors R2B's finding that a
+    # narrative warm-up pass before structured extraction avoids the
+    # compressed-evidence miscalibration seen with LOW Head thinking and no
+    # media; unvalidated for Fellowship V2 specifically as of this change.
+    video_notes: str = Field(
+        min_length=1,
+        description=(
+            "STEP 1: Watch the full video start to finish AND read the "
+            "entire written application (problem description, results, how "
+            "they heard about Silkroad, and any other info shared). Write "
+            "one comprehensive chronological/thematic walkthrough covering "
+            "both — the problem, approach, personal motivation, results and "
+            "impact, program fit, regional relevance, and video delivery "
+            "(eye contact, pacing, scripted vs natural delivery) — in the "
+            "order each source presents it. Note explicitly if the video "
+            "and the written text state the same fact (a number, date, or "
+            "claim) differently. Use this as your working notes before "
+            "filling in the structured fields below."
+        ),
+    )
     Originality: CriterionEvidence
     Approach: CriterionEvidence
     Personal_connection: CriterionEvidence
@@ -293,8 +318,6 @@ class FellowshipV2HeadScore(BaseModel):
     Communication_quality_rationale: str = Field(min_length=1)
     Communication_quality: int = Field(ge=1, le=10)
     final_score: float = Field(ge=1, le=10)
-    override: float = Field(default=0.0, ge=-1.0, le=1.0)
-    override_reasoning: str = ""
     confidence: Literal["low", "medium", "high"]
     # See R2BHeadScore disqualification fields — same contract.
     contradiction_found: bool = False
@@ -331,8 +354,6 @@ class FellowshipV2HeadScore(BaseModel):
                 "Communication quality": self.Communication_quality_rationale,
             },
             final_score=self.final_score,
-            override=self.override,
-            override_reasoning=self.override_reasoning,
             confidence=self.confidence,
             contradiction_found=self.contradiction_found,
             contradiction_reason=self.contradiction_reason,
@@ -350,7 +371,30 @@ class AlchemistAnalystReport(BaseModel):
     generic dict[str, CriterionEvidence] in AnalystReport doesn't convey
     the required keys to the model.
     """
-    # Written FIRST (field order drives generation order in structured
+    # Written FIRST, before key_facts_cross_check (field order drives
+    # generation order in structured output) — mirrors R2BAnalystReport's
+    # video_notes pattern: a full read-through of the sources in the order
+    # they present material, BEFORE the narrower, targeted cross-source
+    # fact-comparison pass below. This is a broad narrative anchor;
+    # key_facts_cross_check remains the separate, focused tool for
+    # checkable-fact comparison and is unchanged. Unvalidated for Alchemist
+    # specifically as of this change — see R2B's video_notes comment for
+    # the empirical history this pattern is based on.
+    source_walkthrough: str = Field(
+        min_length=1,
+        description=(
+            "STEP 1: Read through the entire pitch deck slide by slide AND "
+            "the full application text (both are mandatory sources). If a "
+            "video was also submitted (optional for Alchemist), watch it "
+            "too. Write one comprehensive walkthrough — in the order the "
+            "sources present it — covering product/MVP details, market and "
+            "business model claims, team background, and traction/revenue "
+            "figures, and, if a video is present, what it adds beyond the "
+            "deck and text. Use this as your working notes before filling "
+            "in key_facts_cross_check and the structured fields below."
+        ),
+    )
+    # Written SECOND (field order drives generation order in structured
     # output), before any per-criterion evidence — forces the model to do
     # the cross-source comparison as an explicit step rather than notice
     # contradictions only incidentally while extracting evidence for 4
@@ -399,7 +443,7 @@ class AlchemistHeadScore(BaseModel):
     Same purpose as FellowshipV2HeadScore but for the Alchemist rubric (4
     criteria instead of 9). The validator enforces 1-10 integer scores and
     requires rationale for every criterion before the score (rationale-before-
-    score CoT). Includes a minor ±1.0 override with written reasoning.
+    score CoT).
 
     Field order matters here, not just the prompt text: structured-output
     generation follows field declaration order, so each criterion's
@@ -417,8 +461,6 @@ class AlchemistHeadScore(BaseModel):
     Team_Strength_rationale: str = Field(min_length=1)
     Team_Strength: int = Field(ge=1, le=10)
     final_score: float = Field(ge=1, le=10)
-    override: float = Field(default=0.0, ge=-1.0, le=1.0)
-    override_reasoning: str = ""
     confidence: Literal["low", "medium", "high"]
     # See R2BHeadScore disqualification fields — same contract.
     contradiction_found: bool = False
@@ -445,8 +487,6 @@ class AlchemistHeadScore(BaseModel):
                 "Team Strength": self.Team_Strength_rationale,
             },
             final_score=self.final_score,
-            override=self.override,
-            override_reasoning=self.override_reasoning,
             confidence=self.confidence,
             contradiction_found=self.contradiction_found,
             contradiction_reason=self.contradiction_reason,
@@ -461,8 +501,8 @@ class R2BHeadScore(BaseModel):
 
     Scores approved evidence 1-10 per criterion using the band-then-integer
     method. Writes rationale BEFORE score (rationale-before-score CoT). Final
-    score = average of criterion scores. A minor ±1 adjustment is allowed
-    with reasoning. Confidence reflects evidence quality, not video length.
+    score = average of criterion scores. Confidence reflects evidence
+    quality, not video length.
 
     Used by any program with uses_separate_head=True (R2B with 6 criteria,
     Fellowship V2 with 9 criteria). The validator reads the active-criteria
@@ -472,8 +512,6 @@ class R2BHeadScore(BaseModel):
     criterion_scores: dict[str, int]
     criterion_rationale: dict[str, str]
     final_score: float = Field(ge=1, le=10)
-    override: float = Field(default=0.0, ge=-1.0, le=1.0)
-    override_reasoning: str = ""
     confidence: Literal["low", "medium", "high"]
     # Set true only for a genuine, material contradiction between sources
     # (e.g. deck vs video vs website disagreeing on a real claim) — not
@@ -517,8 +555,6 @@ class R2BHeadScore(BaseModel):
                 raise ValueError(
                     f"criterion_rationale['{name}'] must be non-empty"
                 )
-        if self.override != 0.0 and not self.override_reasoning.strip():
-            raise ValueError("non-zero override requires override_reasoning")
         return self
 
 
@@ -537,8 +573,6 @@ class R2BHeadScoreNamed(BaseModel):
     Presentation_Clarity_rationale: str = Field(min_length=1)
     Presentation_Clarity: int = Field(ge=1, le=10)
     final_score: float = Field(ge=1, le=10)
-    override: float = Field(default=0.0, ge=-1.0, le=1.0)
-    override_reasoning: str = ""
     confidence: Literal["low", "medium", "high"]
     contradiction_found: bool = False
     contradiction_reason: str = ""
@@ -568,8 +602,6 @@ class R2BHeadScoreNamed(BaseModel):
                 "Presentation & Clarity": self.Presentation_Clarity_rationale,
             },
             final_score=self.final_score,
-            override=self.override,
-            override_reasoning=self.override_reasoning,
             confidence=self.confidence,
             contradiction_found=self.contradiction_found,
             contradiction_reason=self.contradiction_reason,

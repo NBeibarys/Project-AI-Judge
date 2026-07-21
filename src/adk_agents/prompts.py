@@ -57,7 +57,6 @@ SCORING INSTRUCTIONS:
 - Each level up requires MORE EVIDENCE, not just "better quality." The question is always: "What additional proof has been provided?"
 - Final score = average of 6 criterion scores.
 - If no video is available, score ALL criteria as 1 with rationale "No video submitted."
-- You may adjust the final score by +1.0 or -1.0 if you provide written reasoning for the adjustment.
 """.strip()
 
 
@@ -86,7 +85,6 @@ SCORING INSTRUCTIONS:
 - Write your rationale BEFORE the score. Rationale must explain what evidence was found (or missing).
 - Each level up requires MORE EVIDENCE, not just "better quality." The question is always: "What additional proof has been provided?"
 - Final score = average of 9 criterion scores.
-- You may adjust the final score by +1.0 or -1.0 if you provide written reasoning for the adjustment.
 """.strip()
 
 
@@ -99,7 +97,14 @@ You are an analyst extracting evidence for a Silkroad Fellowship application
 review. The applicant's submission includes a problem description, results,
 a 1-minute video, how they heard about Silkroad, and any other info they shared.
 
-Watch the video carefully. Extract evidence for spoken claims, visual
+FIRST, fill in video_notes: watch the full video start to finish AND read the
+entire written application (problem description, results, how they heard about
+Silkroad, and any other info shared). Write one comprehensive
+chronological/thematic walkthrough covering both the video and the text — not
+just the video. Do this before filling in any of the per-criterion fields
+below — it is your working notes, not final evidence, so write freely.
+
+THEN, using those notes, watch the video carefully. Extract evidence for spoken claims, visual
 demonstrations, delivery quality, and storytelling. For each rubric criterion,
 extract concrete evidence — quote or closely paraphrase; never invent
 unsupported claims.
@@ -118,6 +123,7 @@ quality. Just report what the applicant said, showed, or demonstrated.
 Output EXACTLY this JSON structure (no other format):
 
 {{
+  "video_notes": "<chronological/thematic walkthrough of the video AND the written application, written FIRST>",
   "criteria": {{
     "Originality": {{
       "evidence": "What the applicant said/did related to originality of the problem",
@@ -334,9 +340,16 @@ reserve it for an application that is self-evidently plagiarized,
 impersonated, or fabricated wholesale, and the grader would already have
 rejected (approved=false) such a case before it ever reached you.
 
-Final score = average of the 9 criterion scores. You may adjust the final score
-by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
-override_reasoning).
+Final score = average of the 9 criterion scores.
+
+The analyst report below includes a "video_notes" field — a full
+chronological/thematic walkthrough of the video AND the written application,
+in addition to the nine per-criterion evidence entries. Read video_notes for
+context and nuance the compressed per-criterion evidence may not fully
+capture. Do NOT cherry-pick a single isolated moment from video_notes to
+justify a harsher score than the per-criterion evidence supports — weigh it
+as supporting context for the evidence already given, not as a separate,
+stricter source you go looking for problems in.
 
 {FELLOWSHIP_V2_RUBRIC_TEXT}
 
@@ -362,8 +375,6 @@ Output EXACTLY this JSON structure (no other format):
   "Communication_quality_rationale": "<your rationale>",
   "Communication_quality": <integer 1-10>,
   "final_score": <float, average of 9 scores>,
-  "override": 0.0,
-  "override_reasoning": "",
   "confidence": "low|medium|high",
   "contradiction_found": <true only for a confirmed, material inconsistency priced into the criteria above — false otherwise>,
   "contradiction_reason": "<specific conflicting claims and their sources, or empty string>",
@@ -562,9 +573,7 @@ Never set disqualifying_issue_found for numeric inconsistencies — reserve
 it for a pitch that is self-evidently plagiarized, impersonated, or
 fabricated wholesale.
 
-Final score = average of the 6 criterion scores. You may adjust the final score
-by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
-override_reasoning).
+Final score = average of the 6 criterion scores.
 
 The analyst report below includes a "video_notes" field — a full chronological
 walkthrough of the video, in addition to the six per-criterion evidence
@@ -624,7 +633,6 @@ SCORING INSTRUCTIONS:
 - For each criterion, first pick a BAND (1-2, 3-4, 5-6, 7-8, 9-10), then pick the exact integer.
 - Write rationale BEFORE the score. Each level up requires MORE EVIDENCE.
 - Final score = average of 4 criterion scores.
-- You may adjust the final score by +1.0 or -1.0 with written reasoning.
 """.strip()
 
 
@@ -646,14 +654,25 @@ concrete evidence — quote or closely paraphrase; never invent unsupported clai
 If no pitch deck was provided, state that explicitly in your evidence for
 Product/MVP & Innovation so the grader can flag the missing required source.
 
-CROSS-SOURCE CONSISTENCY (claim verification) — MANDATORY FIRST STEP:
+FIRST, fill in source_walkthrough: read through the entire pitch deck slide
+by slide AND the full application text (both mandatory sources). If a video
+was also submitted (optional for Alchemist), watch it too. Write one
+comprehensive walkthrough, in the order the sources present it, covering
+product/MVP details, market and business model claims, team background, and
+traction/revenue figures, and — if a video is present — what it adds beyond
+the deck and text. Do this before filling in key_facts_cross_check or any
+per-criterion field below — it is your working notes, not final evidence, so
+write freely.
+
+THEN, do the CROSS-SOURCE CONSISTENCY (claim verification) step — MANDATORY
+before any per-criterion evidence:
 You do not have web search — do not claim to have searched the web or
 verified anything externally. Instead, cross-check claims AGAINST EACH OTHER
 across the sources you were given (pitch deck, application text, video, and
 any applicant-provided URL you can read via url_context).
 
-Before writing ANY per-criterion evidence, fill in "key_facts_cross_check"
-first, and do it in this exact order:
+Using your source_walkthrough notes, fill in "key_facts_cross_check" next,
+and do it in this exact order:
 
 STEP 1 — CHART AND IMAGE SLIDES FIRST: Many deck slides are pure images with
 no selectable text — a screenshot of a chart, a financial projections table,
@@ -700,6 +719,8 @@ quality. Just report what the applicant said, showed, or demonstrated.
 Output EXACTLY this JSON structure (no other format):
 
 {{
+  "source_walkthrough": "<comprehensive walkthrough of the deck, application text, and video (if present), written FIRST>",
+  "key_facts_cross_check": "<cross-source fact comparison, written after source_walkthrough>",
   "Product_MVP_Innovation": {{
     "evidence": "Evidence about the MVP, product stage, innovation, or differentiation",
     "notes": "Additional context or observations",
@@ -831,9 +852,7 @@ PITCH DECK PENALTY:
 
 Video is optional. Missing video should NOT penalize any criterion.
 
-Final score = average of the 4 criterion scores. You may adjust the final score
-by +1.0 or -1.0 if you provide written reasoning for the adjustment (override +
-override_reasoning).
+Final score = average of the 4 criterion scores.
 
 INTERNAL INCONSISTENCIES — PRICE INTO THE RELEVANT CRITERIA, NEVER ZERO:
 The grader has already checked whether a genuine, irreconcilable
@@ -870,22 +889,30 @@ Never set disqualifying_issue_found for a numeric or factual inconsistency
 impersonated, or fabricated wholesale, and the grader would already have
 rejected (approved=false) such a case before it ever reached you.
 
+The analyst report below includes a "source_walkthrough" field — a
+comprehensive walkthrough of the pitch deck, application text, and video (if
+present), in addition to the four per-criterion evidence entries and the
+key_facts_cross_check field. Read source_walkthrough for context and nuance
+the compressed per-criterion evidence may not fully capture. Do NOT
+cherry-pick a single isolated detail from source_walkthrough to justify a
+harsher score than the per-criterion evidence supports — weigh it as
+supporting context for the evidence already given, not as a separate,
+stricter source you go looking for problems in.
+
 {ALCHEMIST_RUBRIC_TEXT}
 
 Output EXACTLY this JSON structure (no other format):
 
 {{
-  "Product_MVP_Innovation": <integer 1-10>,
-  "Market_Potential": <integer 1-10>,
-  "Scalability_US_Market": <integer 1-10>,
-  "Team_Strength": <integer 1-10>,
   "Product_MVP_Innovation_rationale": "<your rationale BEFORE the score>",
+  "Product_MVP_Innovation": <integer 1-10>,
   "Market_Potential_rationale": "<your rationale>",
+  "Market_Potential": <integer 1-10>,
   "Scalability_US_Market_rationale": "<your rationale>",
+  "Scalability_US_Market": <integer 1-10>,
   "Team_Strength_rationale": "<your rationale>",
+  "Team_Strength": <integer 1-10>,
   "final_score": <float, average of 4 scores>,
-  "override": 0.0,
-  "override_reasoning": "",
   "confidence": "low|medium|high",
   "contradiction_found": <true only for a confirmed, material inconsistency priced into the criteria above — false otherwise>,
   "contradiction_reason": "<specific conflicting claims and their sources, or empty string>",
