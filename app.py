@@ -130,53 +130,98 @@ with st.sidebar:
                 criterion_column_overrides = {}
                 for _criterion in _program_config.rubric_criteria:
                     _hardcoded = _program_config.criterion_column_names.get(_criterion, "")
-                    _default_idx = (
-                        _preview_header.index(_hardcoded)
-                        if _hardcoded in _preview_header else 0
-                    )
-                    criterion_column_overrides[_criterion] = st.selectbox(
+                    if _hardcoded in _preview_header:
+                        _default_idx = _preview_header.index(_hardcoded)
+                    else:
+                        _default_idx = None
+                        st.warning(
+                            f"Default '{_hardcoded}' column not found in this sheet — "
+                            f"please select the correct '{_criterion}' column."
+                        )
+                    _criterion_selection = st.selectbox(
                         f"{_criterion} column",
                         options=_preview_header, index=_default_idx,
+                        placeholder="Select a column…",
                         help=f"Column this run writes the '{_criterion}' score to.",
                     )
-                _default_total_idx = (
-                    _preview_header.index(_program_config.total_score_column_name)
-                    if _program_config.total_score_column_name in _preview_header else 0
-                )
+                    # Only record a real (non-None) selection here — Config.
+                    # from_env's criterion_column_overrides dict gets blindly
+                    # dict.update()-ed into the hardcoded defaults, so a
+                    # {criterion: None} entry from a left-unselected dropdown
+                    # would overwrite (and destroy) an otherwise-valid
+                    # hardcoded default for THAT criterion instead of leaving
+                    # it alone, unlike the scalar overrides below which each
+                    # get their own `if x:` None-safe check.
+                    if _criterion_selection is not None:
+                        criterion_column_overrides[_criterion] = _criterion_selection
+                if _program_config.total_score_column_name in _preview_header:
+                    _default_total_idx = _preview_header.index(
+                        _program_config.total_score_column_name
+                    )
+                else:
+                    _default_total_idx = None
+                    st.warning(
+                        f"Default '{_program_config.total_score_column_name}' column not "
+                        "found in this sheet — please select the correct Total Score column."
+                    )
                 total_score_column_override = st.selectbox(
                     "Total Score column", options=_preview_header, index=_default_total_idx,
+                    placeholder="Select a column…",
                     help="Column this run writes the total score to.",
                 )
-                _default_notes_idx = (
-                    _preview_header.index(_program_config.notes_column_name)
-                    if _program_config.notes_column_name in _preview_header else 0
-                )
+                if _program_config.notes_column_name in _preview_header:
+                    _default_notes_idx = _preview_header.index(
+                        _program_config.notes_column_name
+                    )
+                else:
+                    _default_notes_idx = None
+                    st.warning(
+                        f"Default '{_program_config.notes_column_name}' column not found "
+                        "in this sheet — please select the correct Notes / Comments column."
+                    )
                 notes_column_override = st.selectbox(
                     "Notes / Comments column", options=_preview_header, index=_default_notes_idx,
+                    placeholder="Select a column…",
                     help="Column this run writes the AI's reasoning/notes to.",
                 )
                 _mapped_output_columns = (
                     set(criterion_column_overrides.values())
                     | {total_score_column_override, notes_column_override}
-                )
+                ) - {None}
             else:
-                _default_score_idx = (
-                    _preview_header.index(_program_config.score_column_name)
-                    if _program_config.score_column_name in _preview_header else 0
-                )
-                _default_reasoning_idx = (
-                    _preview_header.index(_program_config.reasoning_column_name)
-                    if _program_config.reasoning_column_name in _preview_header else 0
-                )
+                if _program_config.score_column_name in _preview_header:
+                    _default_score_idx = _preview_header.index(
+                        _program_config.score_column_name
+                    )
+                else:
+                    _default_score_idx = None
+                    st.warning(
+                        f"Default '{_program_config.score_column_name}' column not found "
+                        "in this sheet — please select the correct Score column."
+                    )
+                if _program_config.reasoning_column_name in _preview_header:
+                    _default_reasoning_idx = _preview_header.index(
+                        _program_config.reasoning_column_name
+                    )
+                else:
+                    _default_reasoning_idx = None
+                    st.warning(
+                        f"Default '{_program_config.reasoning_column_name}' column not "
+                        "found in this sheet — please select the correct Reasoning column."
+                    )
                 score_column_override = st.selectbox(
                     "Score column", options=_preview_header, index=_default_score_idx,
+                    placeholder="Select a column…",
                     help="Column this run writes the numeric score to.",
                 )
                 reasoning_column_override = st.selectbox(
                     "Reasoning column", options=_preview_header, index=_default_reasoning_idx,
+                    placeholder="Select a column…",
                     help="Column this run writes the AI's reasoning to.",
                 )
-                _mapped_output_columns = {score_column_override, reasoning_column_override}
+                _mapped_output_columns = (
+                    {score_column_override, reasoning_column_override} - {None}
+                )
 
             # Name column: which sheet column identifies the applicant/
             # startup by name — used by pipeline.py for no-show detection,
@@ -190,15 +235,21 @@ with st.sidebar:
             # (_find_name_column_index — the same "startup/company/team/
             # project name" guess ProgramConfig.name_column_name=None keeps
             # using) so a sheet with a conventional header still
-            # pre-selects the right column; falls back to index 0 (like
-            # every other selectbox default here) when no hint matches,
-            # e.g. Fellowship V2's "Participant Name"-style header.
+            # pre-selects the right column; leaves the dropdown unselected
+            # (index=None, forcing a conscious operator choice instead of a
+            # silent wrong guess) when no hint matches, e.g. Fellowship V2's
+            # "Participant Name"-style header.
             _default_name_idx = _find_name_column_index(_preview_header)
             if _default_name_idx is None:
-                _default_name_idx = 0
+                st.warning(
+                    "Could not auto-detect a Name column in this sheet — "
+                    "please select the correct column identifying the "
+                    "applicant/startup by name."
+                )
             name_column_override = st.selectbox(
                 "Name column",
                 options=_preview_header, index=_default_name_idx,
+                placeholder="Select a column…",
                 help="Column identifying the applicant/startup by name — "
                 "used for no-show detection, R2B's wrong-segment tripwire "
                 "note, and duplicate-email disambiguation.",
