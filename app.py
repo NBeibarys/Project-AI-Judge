@@ -80,6 +80,63 @@ with st.sidebar:
         "columns are then resolved from the header row itself.",
     )
 
+    # Alchemist-only for now: unlike R2B's fixed sheet layout, Alchemist's
+    # column names aren't assumed fixed across sheets, so let the operator
+    # map them per connection instead of relying on ProgramConfig's
+    # hardcoded score_column_name/reasoning_column_name/excluded_header_*.
+    # A lightweight header-only read (no full row fetch) populates the
+    # dropdowns; this can error before a valid sheet ID+tab are both
+    # entered, so it's wrapped and silently skipped rather than shown as
+    # an error — the "Config error" below already covers a genuinely bad
+    # sheet ID/tab once the user finishes typing.
+    score_column_override = None
+    reasoning_column_override = None
+    ignored_columns_override = None
+    if program == "alchemist" and sheet_id_input and sheet_range_input:
+        try:
+            _preview_service = get_sheets_service(
+                os.environ.get("GOOGLE_SERVICE_ACCOUNT_PATH", "")
+            )
+            _preview_header, _ = read_sheet_rows(
+                _preview_service, sheet_id_input, sheet_range_input,
+                int(header_row_input),
+            )
+        except Exception:
+            _preview_header = []
+
+        if _preview_header:
+            st.divider()
+            st.subheader("Column mapping")
+            _default_score_idx = (
+                _preview_header.index(_program_config.score_column_name)
+                if _program_config.score_column_name in _preview_header else 0
+            )
+            _default_reasoning_idx = (
+                _preview_header.index(_program_config.reasoning_column_name)
+                if _program_config.reasoning_column_name in _preview_header else 0
+            )
+            score_column_override = st.selectbox(
+                "Score column", options=_preview_header, index=_default_score_idx,
+                help="Column this run writes the numeric score to.",
+            )
+            reasoning_column_override = st.selectbox(
+                "Reasoning column", options=_preview_header, index=_default_reasoning_idx,
+                help="Column this run writes the AI's reasoning to.",
+            )
+            # Pre-check whatever the hardcoded defaults would have excluded
+            # (PII columns, output columns) so switching to a new sheet
+            # doesn't silently feed those to the AI just because nobody
+            # re-picked them here.
+            _default_ignored = [
+                c for c in _preview_header
+                if c in _program_config.excluded_header_names
+                or any(s in c.lower() for s in _program_config.excluded_header_substrings)
+            ]
+            ignored_columns_override = st.multiselect(
+                "Columns to ignore (hidden from the AI)",
+                options=_preview_header, default=_default_ignored,
+            )
+
 st.title(f"{PROGRAM_LABELS[program]} Grading Agent")
 
 try:
@@ -89,6 +146,11 @@ try:
         sheet_range_override=sheet_range_input or None,
         header_row_override=int(header_row_input),
         top_label_row_override=int(top_label_row_input),
+        score_column_override=score_column_override,
+        reasoning_column_override=reasoning_column_override,
+        ignored_columns_override=(
+            tuple(ignored_columns_override) if ignored_columns_override else None
+        ),
     )
 except RuntimeError as exc:
     st.error(f"Config error: {exc}")

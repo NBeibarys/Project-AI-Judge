@@ -371,6 +371,71 @@ def process_row(
         ),
         "retry_count": 0,
     }
+
+    # Alchemist: pitch deck is required and is checked FIRST, before any
+    # video resolution is even attempted. If no pitch deck URL is submitted,
+    # or the deck link is deterministically unfetchable, this is a human-
+    # review case regardless of video — score all criteria as 0 and skip
+    # the LLM pipeline entirely (saves API cost, avoids attempting a
+    # possibly-expensive video download for a row that's already a known
+    # dead end). Only once the deck is confirmed accessible does the video
+    # block below even run; there, an unresolvable video is fine — video is
+    # optional for this program and must not force human review or be
+    # penalized (see ALCHEMIST_RUBRIC_TEXT: "Video is optional. Missing
+    # video should NOT penalize any criterion.").
+    if config.program_config.requires_pitch_deck:
+        submitted_pitch_deck_url = _submitted_pitch_deck_url(header, row)
+        if not submitted_pitch_deck_url:
+            # No pitch deck = automatic 0 on all criteria, no API calls.
+            return row_id, {
+                "score": 0,
+                "reasoning": json.dumps({
+                    "criterion_scores": {c: 0 for c in config.program_config.rubric_criteria},
+                    "criterion_rationale": {
+                        c: "No pitch deck submitted. Pitch deck is required for Alchemist evaluation."
+                        for c in config.program_config.rubric_criteria
+                    },
+                }),
+                "human_review_flag": True,
+                "skipped_no_pitch_deck": True,
+            }
+        initial_state["submitted_pitch_deck_url"] = submitted_pitch_deck_url
+        try:
+            resolved_deck = ingest_pitch_deck(
+                submitted_pitch_deck_url,
+                config.service_account_path,
+                config.analyzer_model,
+            )
+            initial_state["pitch_deck_url"] = resolved_deck.uri
+            initial_state["pitch_deck_data"] = resolved_deck.data
+            initial_state["pitch_deck_mime_type"] = resolved_deck.mime_type
+            initial_state["pitch_deck_source"] = resolved_deck.source
+            initial_state["pitch_deck_chart_text"] = resolved_deck.chart_text
+        except VideoResolutionError as exc:
+            # A deck link was submitted but is deterministically unfetchable
+            # (Drive folder instead of a file, Canva/Cloudflare-blocked page,
+            # a JS-rendered site with no direct export, etc.) — this is the
+            # same outcome as "no deck submitted" from the grader's
+            # perspective (the required primary source is unavailable), so
+            # short-circuit the same way: a deterministic score of 0, no LLM
+            # call. Running the full analyst->grader->head pipeline just to
+            # have it echo back "deck unavailable" wastes API calls/quota on
+            # a row that's already a known dead end, and risks a random
+            # infra failure (429/500) turning a clean, honest outcome into a
+            # silently-stuck "failed" checkpoint entry instead.
+            return row_id, {
+                "score": 0,
+                "reasoning": json.dumps({
+                    "criterion_scores": {c: 0 for c in config.program_config.rubric_criteria},
+                    "criterion_rationale": {
+                        c: f"Pitch deck could not be accessed: {exc}"
+                        for c in config.program_config.rubric_criteria
+                    },
+                }),
+                "human_review_flag": True,
+                "skipped_no_pitch_deck": True,
+            }
+
     submitted_video_url = _submitted_video_url(header, row)
     if submitted_video_url:
         initial_state["submitted_video_url"] = submitted_video_url
@@ -437,10 +502,24 @@ def process_row(
             # Part (video_url is set) AND append "VIDEO UNAVAILABLE: ..."
             # (video_error is set) — a contradictory state for the analyst.
             initial_state.pop("video_error", None)
-        else:
+        elif not config.program_config.requires_pitch_deck:
             # A video link was submitted but could not be resolved to a
-            # real, playable video by either tier — route to human review
-            # instead of entering the LLM pipeline (saves the API cost too).
+            # real, playable video by either tier, AND this program has no
+            # alternate required source (R2B/Fellowship V2 are video-only/
+            # video-primary) — route to human review instead of entering
+            # the LLM pipeline (saves the API cost too).
+            #
+            # Programs with a required pitch deck (Alchemist) do NOT take
+            # this branch. By this point the deck has already been checked
+            # (see the requires_pitch_deck block earlier in this function,
+            # which runs and returns BEFORE video is ever touched) — so an
+            # unresolvable video here is a program with a confirmed-good
+            # deck and a merely-optional video that happens to be broken.
+            # video is optional there ("Video is optional. Missing video
+            # should NOT penalize any criterion." — ALCHEMIST_RUBRIC_TEXT),
+            # so this must not force human review or skip the pipeline.
+            # video_error is already set above; execution falls through and
+            # grading proceeds on the deck/text alone.
             unresolvable_note = (
                 f"Video link could not be resolved to a playable video "
                 f"(not YouTube, not Drive, no direct video file found): "
@@ -506,62 +585,6 @@ def process_row(
             "video_error",
             "No video URL submitted or video could not be resolved.",
         )
-
-    # Alchemist: pitch deck is required. If no pitch deck URL is submitted,
-    # score all criteria as 0 and skip the LLM pipeline entirely — this saves
-    # API costs and enforces the requirement.
-    if config.program_config.requires_pitch_deck:
-        submitted_pitch_deck_url = _submitted_pitch_deck_url(header, row)
-        if not submitted_pitch_deck_url:
-            # No pitch deck = automatic 0 on all criteria, no API calls.
-            return row_id, {
-                "score": 0,
-                "reasoning": json.dumps({
-                    "criterion_scores": {c: 0 for c in config.program_config.rubric_criteria},
-                    "criterion_rationale": {
-                        c: "No pitch deck submitted. Pitch deck is required for Alchemist evaluation."
-                        for c in config.program_config.rubric_criteria
-                    },
-                }),
-                "human_review_flag": True,
-                "skipped_no_pitch_deck": True,
-            }
-        initial_state["submitted_pitch_deck_url"] = submitted_pitch_deck_url
-        try:
-            resolved_deck = ingest_pitch_deck(
-                submitted_pitch_deck_url,
-                config.service_account_path,
-                config.analyzer_model,
-            )
-            initial_state["pitch_deck_url"] = resolved_deck.uri
-            initial_state["pitch_deck_data"] = resolved_deck.data
-            initial_state["pitch_deck_mime_type"] = resolved_deck.mime_type
-            initial_state["pitch_deck_source"] = resolved_deck.source
-            initial_state["pitch_deck_chart_text"] = resolved_deck.chart_text
-        except VideoResolutionError as exc:
-            # A deck link was submitted but is deterministically unfetchable
-            # (Drive folder instead of a file, Canva/Cloudflare-blocked page,
-            # a JS-rendered site with no direct export, etc.) — this is the
-            # same outcome as "no deck submitted" from the grader's
-            # perspective (the required primary source is unavailable), so
-            # short-circuit the same way: a deterministic score of 0, no LLM
-            # call. Running the full analyst->grader->head pipeline just to
-            # have it echo back "deck unavailable" wastes API calls/quota on
-            # a row that's already a known dead end, and risks a random
-            # infra failure (429/500) turning a clean, honest outcome into a
-            # silently-stuck "failed" checkpoint entry instead.
-            return row_id, {
-                "score": 0,
-                "reasoning": json.dumps({
-                    "criterion_scores": {c: 0 for c in config.program_config.rubric_criteria},
-                    "criterion_rationale": {
-                        c: f"Pitch deck could not be accessed: {exc}"
-                        for c in config.program_config.rubric_criteria
-                    },
-                }),
-                "human_review_flag": True,
-                "skipped_no_pitch_deck": True,
-            }
 
     no_fallback_without_video = bool(config.program_config.criterion_column_names)
     try:

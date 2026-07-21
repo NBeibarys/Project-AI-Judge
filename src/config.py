@@ -15,6 +15,7 @@ programs within a batch.
 Gemini-only for now (no Claude credit on this account) — see project
 memory for the multi-provider history if Claude support needs reviving.
 """
+import dataclasses
 import os
 from dataclasses import dataclass
 
@@ -45,6 +46,9 @@ class Config:
         sheet_range_override: str | None = None,
         header_row_override: int | None = None,
         top_label_row_override: int | None = None,
+        score_column_override: str | None = None,
+        reasoning_column_override: str | None = None,
+        ignored_columns_override: tuple[str, ...] | None = None,
     ) -> "Config":
         """Build Config from env vars, with optional per-call overrides for
         sheet_id/sheet_range/header_row/top_label_row — used by app.py's
@@ -53,8 +57,40 @@ class Config:
         sheet, sometimes with no merged top-label row at all) without
         editing .env. Omitted overrides fall back to the existing env-var
         behavior unchanged.
+
+        score_column_override/reasoning_column_override/ignored_columns_override
+        let the caller replace which sheet columns this run writes score/
+        reasoning to and which columns are hidden from the AI, instead of
+        the hardcoded per-program values in ProgramConfig (Alchemist's
+        column layout isn't fixed across sheets the way R2B's is — see
+        app.py's per-session column-mapping dropdowns, Alchemist-only for
+        now). Building a derived ProgramConfig via dataclasses.replace here
+        keeps this scoped to a single Config instance/run — the shared
+        ALCHEMIST_CONFIG singleton in programs.py is never mutated, so a
+        concurrent run using default columns is unaffected.
         """
         program_config = get_program_config(program)
+        if score_column_override or reasoning_column_override or ignored_columns_override is not None:
+            excluded_names = frozenset(ignored_columns_override or ()) | {""}
+            if score_column_override:
+                excluded_names = excluded_names | {score_column_override}
+            if reasoning_column_override:
+                excluded_names = excluded_names | {reasoning_column_override}
+            program_config = dataclasses.replace(
+                program_config,
+                score_column_name=score_column_override or program_config.score_column_name,
+                reasoning_column_name=(
+                    reasoning_column_override or program_config.reasoning_column_name
+                ),
+                # Replaces the hardcoded excluded_header_names/substrings
+                # entirely rather than adding to them: once the UI shows
+                # every real column and the user picks exactly which ones
+                # to ignore, a leftover hardcoded substring match (e.g.
+                # "ceo") could silently hide a column the user chose to
+                # keep visible to the AI.
+                excluded_header_names=excluded_names,
+                excluded_header_substrings=(),
+            )
         sheet_id = sheet_id_override or os.environ.get(program_config.sheet_id_env, "")
         sa_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_PATH", "")
 
