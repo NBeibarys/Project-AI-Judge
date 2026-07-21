@@ -795,11 +795,21 @@ def run_batch(
     force: bool = False,
     limit: int | None = None,
     on_progress=None,
+    target_row_number: int | None = None,
 ):
     """Run the batch. on_progress(done, total, row_id, ok), if given, is
     called synchronously on the calling thread right after each row
     finishes (success or failure) — safe for a caller like a Streamlit
     script to update a progress bar without needing its own thread.
+
+    target_row_number, when given, restricts the run to exactly that sheet
+    row (1-indexed as it appears in the actual Google Sheet) and always
+    re-grades it regardless of checkpoint state — for testing a single
+    known row (e.g. after a prompt/config change) without touching the
+    rest of the sheet or needing "re-grade already-graded rows" turned on
+    for the whole batch. Applies uniformly to every program (no
+    program-specific gating) since row-number addressing is generic sheet
+    geometry, not a program-specific concept.
     """
     sheets_service = get_sheets_service(config.service_account_path)
     checkpoint = Checkpoint(config.checkpoint_path)
@@ -848,11 +858,14 @@ def run_batch(
         futures = {}
         submitted = 0
         for i, row in enumerate(rows):
+            sheet_row_number = i + config.header_row + 1 + offset  # header_row + sub-header skip + 1-indexing
+            if target_row_number is not None and sheet_row_number != target_row_number:
+                continue
             if limit is not None and submitted >= limit:
                 break
-            sheet_row_number = i + config.header_row + 1 + offset  # header_row + sub-header skip + 1-indexing
             row_id_preview = _derive_row_id(header, row, sheet_row_number, duplicate_emails)
-            if checkpoint.is_done(row_id_preview) and not force:
+            effective_force = force or target_row_number is not None
+            if checkpoint.is_done(row_id_preview) and not effective_force:
                 continue
             submitted += 1
             future = pool.submit(
@@ -863,7 +876,7 @@ def run_batch(
                 row,
                 sheet_row_number,
                 checkpoint,
-                force=force,
+                force=effective_force,
                 duplicate_emails=duplicate_emails,
             )
             futures[future] = (row_id_preview, sheet_row_number)

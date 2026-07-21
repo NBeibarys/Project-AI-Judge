@@ -215,7 +215,22 @@ with st.sidebar:
         st.success("Checkpoint reset.")
         st.rerun()
 
-if run_clicked:
+    st.divider()
+    st.header("Test a single row")
+    test_row_number = st.number_input(
+        "Sheet row number",
+        min_value=1, max_value=100000,
+        value=config.header_row + 1, step=1,
+        help="Grade exactly this row (numbered as it appears in the actual "
+        "Google Sheet), bypassing the checkpoint — always re-runs even if "
+        "already graded. Useful for testing a prompt/config change on one "
+        "known row before running a full batch.",
+    )
+    test_row_clicked = st.button(
+        "Grade this row only", use_container_width=True,
+    )
+
+if run_clicked or test_row_clicked:
     progress_bar = st.progress(0.0)
     status_text = st.empty()
     # The progress bar/text below only update once a ROW FINISHES (via
@@ -248,12 +263,24 @@ if run_clicked:
             f"{fail_count} failed"
         )
 
-    result = run_batch(
-        config, force=force, limit=int(limit), on_progress=_on_progress
-    )
+    if test_row_clicked:
+        result = run_batch(
+            config, force=True, limit=1, on_progress=_on_progress,
+            target_row_number=int(test_row_number),
+        )
+    else:
+        result = run_batch(
+            config, force=force, limit=int(limit), on_progress=_on_progress
+        )
     progress_bar.empty()
     status_text.empty()
     st.success(f"Graded: {len(result['graded'])} | Errors: {len(result['errors'])}")
+    if test_row_clicked and not result["graded"] and not result["errors"]:
+        st.warning(
+            f"Row {int(test_row_number)} was not graded — it may not exist "
+            "in the current sheet range, or was deliberately skipped "
+            "(no-show, missing required source, etc)."
+        )
     if result["errors"]:
         with st.expander(f"{len(result['errors'])} error(s)"):
             for row_id, err in result["errors"].items():
