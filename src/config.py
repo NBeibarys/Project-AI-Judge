@@ -49,6 +49,9 @@ class Config:
         score_column_override: str | None = None,
         reasoning_column_override: str | None = None,
         ignored_columns_override: tuple[str, ...] | None = None,
+        criterion_column_overrides: dict[str, str] | None = None,
+        total_score_column_override: str | None = None,
+        notes_column_override: str | None = None,
     ) -> "Config":
         """Build Config from env vars, with optional per-call overrides for
         sheet_id/sheet_range/header_row/top_label_row — used by app.py's
@@ -61,16 +64,64 @@ class Config:
         score_column_override/reasoning_column_override/ignored_columns_override
         let the caller replace which sheet columns this run writes score/
         reasoning to and which columns are hidden from the AI, instead of
-        the hardcoded per-program values in ProgramConfig (Alchemist's
-        column layout isn't fixed across sheets the way R2B's is — see
-        app.py's per-session column-mapping dropdowns, Alchemist-only for
-        now). Building a derived ProgramConfig via dataclasses.replace here
-        keeps this scoped to a single Config instance/run — the shared
-        ALCHEMIST_CONFIG singleton in programs.py is never mutated, so a
+        the hardcoded per-program values in ProgramConfig (Alchemist's and
+        Fellowship V2's column layout isn't fixed across sheets — see
+        app.py's per-session column-mapping dropdowns). Building a derived
+        ProgramConfig via dataclasses.replace here keeps this scoped to a
+        single Config instance/run — the shared ALCHEMIST_CONFIG/
+        FELLOWSHIP_V2_CONFIG singleton in programs.py is never mutated, so a
         concurrent run using default columns is unaffected.
+
+        criterion_column_overrides/total_score_column_override/
+        notes_column_override are the equivalent for the MULTI-column output
+        shape (R2B today: one sheet column per rubric criterion, plus a
+        Total Score column and a Notes/Comments column, instead of a single
+        score+reasoning pair). Same non-mutating dataclasses.replace
+        approach — the shared R2B_CONFIG singleton is never mutated.
         """
         program_config = get_program_config(program)
-        if score_column_override or reasoning_column_override or ignored_columns_override is not None:
+        if program_config.criterion_column_names is not None:
+            # Multi-column shape (R2B): one sheet column per rubric
+            # criterion, plus Total Score/Notes columns, instead of a
+            # single score+reasoning pair. Mirrors the single-column branch
+            # below, just extended to N criterion columns.
+            if (
+                criterion_column_overrides
+                or total_score_column_override
+                or notes_column_override
+                or ignored_columns_override is not None
+            ):
+                new_criterion_column_names = dict(program_config.criterion_column_names)
+                if criterion_column_overrides:
+                    new_criterion_column_names.update(criterion_column_overrides)
+                new_total_score_column_name = (
+                    total_score_column_override or program_config.total_score_column_name
+                )
+                new_notes_column_name = (
+                    notes_column_override or program_config.notes_column_name
+                )
+                excluded_names = (
+                    frozenset(ignored_columns_override or ())
+                    | {""}
+                    | frozenset(new_criterion_column_names.values())
+                )
+                if new_total_score_column_name:
+                    excluded_names = excluded_names | {new_total_score_column_name}
+                if new_notes_column_name:
+                    excluded_names = excluded_names | {new_notes_column_name}
+                program_config = dataclasses.replace(
+                    program_config,
+                    criterion_column_names=new_criterion_column_names,
+                    total_score_column_name=new_total_score_column_name,
+                    notes_column_name=new_notes_column_name,
+                    # Same rationale as the single-column path below: replace
+                    # the hardcoded excluded set entirely rather than adding
+                    # to it, now that the UI shows every real column and the
+                    # user has explicitly mapped/ignored what they want.
+                    excluded_header_names=excluded_names,
+                    excluded_header_substrings=(),
+                )
+        elif score_column_override or reasoning_column_override or ignored_columns_override is not None:
             excluded_names = frozenset(ignored_columns_override or ()) | {""}
             if score_column_override:
                 excluded_names = excluded_names | {score_column_override}

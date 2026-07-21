@@ -84,19 +84,23 @@ with st.sidebar:
         "columns are then resolved from the header row itself.",
     )
 
-    # Alchemist-only for now: unlike R2B's fixed sheet layout, Alchemist's
-    # column names aren't assumed fixed across sheets, so let the operator
-    # map them per connection instead of relying on ProgramConfig's
-    # hardcoded score_column_name/reasoning_column_name/excluded_header_*.
-    # A lightweight header-only read (no full row fetch) populates the
-    # dropdowns; this can error before a valid sheet ID+tab are both
-    # entered, so it's wrapped and silently skipped rather than shown as
-    # an error — the "Config error" below already covers a genuinely bad
-    # sheet ID/tab once the user finishes typing.
+    # Column mapping: sheet layouts aren't assumed fixed across programs/
+    # sheets, so let the operator map columns per connection instead of
+    # relying on ProgramConfig's hardcoded score_column_name/
+    # reasoning_column_name (or, for R2B's multi-column shape,
+    # criterion_column_names/total_score_column_name/notes_column_name)
+    # and excluded_header_*. A lightweight header-only read (no full row
+    # fetch) populates the dropdowns; this can error before a valid sheet
+    # ID+tab are both entered, so it's wrapped and silently skipped rather
+    # than shown as an error — the "Config error" below already covers a
+    # genuinely bad sheet ID/tab once the user finishes typing.
     score_column_override = None
     reasoning_column_override = None
     ignored_columns_override = None
-    if program == "alchemist" and sheet_id_input and sheet_range_input:
+    criterion_column_overrides = None
+    total_score_column_override = None
+    notes_column_override = None
+    if sheet_id_input and sheet_range_input:
         try:
             _preview_service = get_sheets_service(
                 os.environ.get("GOOGLE_SERVICE_ACCOUNT_PATH", "")
@@ -111,30 +115,74 @@ with st.sidebar:
         if _preview_header:
             st.divider()
             st.subheader("Column mapping")
-            _default_score_idx = (
-                _preview_header.index(_program_config.score_column_name)
-                if _program_config.score_column_name in _preview_header else 0
-            )
-            _default_reasoning_idx = (
-                _preview_header.index(_program_config.reasoning_column_name)
-                if _program_config.reasoning_column_name in _preview_header else 0
-            )
-            score_column_override = st.selectbox(
-                "Score column", options=_preview_header, index=_default_score_idx,
-                help="Column this run writes the numeric score to.",
-            )
-            reasoning_column_override = st.selectbox(
-                "Reasoning column", options=_preview_header, index=_default_reasoning_idx,
-                help="Column this run writes the AI's reasoning to.",
-            )
+
+            if _program_config.criterion_column_names is not None:
+                # Multi-column shape (R2B today): one sheet column per
+                # rubric criterion, plus Total Score and Notes/Comments
+                # columns, instead of a single score+reasoning pair.
+                criterion_column_overrides = {}
+                for _criterion in _program_config.rubric_criteria:
+                    _hardcoded = _program_config.criterion_column_names.get(_criterion, "")
+                    _default_idx = (
+                        _preview_header.index(_hardcoded)
+                        if _hardcoded in _preview_header else 0
+                    )
+                    criterion_column_overrides[_criterion] = st.selectbox(
+                        f"{_criterion} column",
+                        options=_preview_header, index=_default_idx,
+                        help=f"Column this run writes the '{_criterion}' score to.",
+                    )
+                _default_total_idx = (
+                    _preview_header.index(_program_config.total_score_column_name)
+                    if _program_config.total_score_column_name in _preview_header else 0
+                )
+                total_score_column_override = st.selectbox(
+                    "Total Score column", options=_preview_header, index=_default_total_idx,
+                    help="Column this run writes the total score to.",
+                )
+                _default_notes_idx = (
+                    _preview_header.index(_program_config.notes_column_name)
+                    if _program_config.notes_column_name in _preview_header else 0
+                )
+                notes_column_override = st.selectbox(
+                    "Notes / Comments column", options=_preview_header, index=_default_notes_idx,
+                    help="Column this run writes the AI's reasoning/notes to.",
+                )
+                _mapped_output_columns = (
+                    set(criterion_column_overrides.values())
+                    | {total_score_column_override, notes_column_override}
+                )
+            else:
+                _default_score_idx = (
+                    _preview_header.index(_program_config.score_column_name)
+                    if _program_config.score_column_name in _preview_header else 0
+                )
+                _default_reasoning_idx = (
+                    _preview_header.index(_program_config.reasoning_column_name)
+                    if _program_config.reasoning_column_name in _preview_header else 0
+                )
+                score_column_override = st.selectbox(
+                    "Score column", options=_preview_header, index=_default_score_idx,
+                    help="Column this run writes the numeric score to.",
+                )
+                reasoning_column_override = st.selectbox(
+                    "Reasoning column", options=_preview_header, index=_default_reasoning_idx,
+                    help="Column this run writes the AI's reasoning to.",
+                )
+                _mapped_output_columns = {score_column_override, reasoning_column_override}
+
             # Pre-check whatever the hardcoded defaults would have excluded
             # (PII columns, output columns) so switching to a new sheet
             # doesn't silently feed those to the AI just because nobody
-            # re-picked them here.
+            # re-picked them here. Also pre-check the columns just mapped
+            # above — redundant with the always-applied exclusion in
+            # config.py, but harmless and keeps the multiselect honest
+            # about what's actually hidden from the AI.
             _default_ignored = [
                 c for c in _preview_header
                 if c in _program_config.excluded_header_names
                 or any(s in c.lower() for s in _program_config.excluded_header_substrings)
+                or c in _mapped_output_columns
             ]
             ignored_columns_override = st.multiselect(
                 "Columns to ignore (hidden from the AI)",
@@ -155,6 +203,9 @@ try:
         ignored_columns_override=(
             tuple(ignored_columns_override) if ignored_columns_override else None
         ),
+        criterion_column_overrides=criterion_column_overrides,
+        total_score_column_override=total_score_column_override,
+        notes_column_override=notes_column_override,
     )
 except RuntimeError as exc:
     st.error(f"Config error: {exc}")
