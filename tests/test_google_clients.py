@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import MagicMock
 
-from src.google_clients import extract_drive_file_id
+from src.google_clients import extract_drive_file_id, read_sheet_rows
 from src.video_ingestion import _is_google_slides_url
 
 
@@ -45,6 +46,45 @@ class SlidesUrlTests(unittest.TestCase):
                 "https://docs.google.com/presentation/d/1a2b3c4d/edit"
             )
         )
+
+
+class SheetRangeAnchorTests(unittest.TestCase):
+    """A row-anchored range shifts every row the batch writes back, so it
+    is rejected instead of silently grading the wrong applicants' rows."""
+
+    @staticmethod
+    def _service_returning_rows() -> MagicMock:
+        service = MagicMock()
+        service.spreadsheets.return_value.values.return_value.get.return_value.execute.return_value = {
+            "values": [["Email"], ["applicant@example.com"]]
+        }
+        return service
+
+    def test_accepts_a_bare_tab_name(self) -> None:
+        # "Round2" is a tab name, not cell A-column row 2.
+        for tab in ("Grading Final", "Round2"):
+            with self.subTest(tab=tab):
+                header, rows = read_sheet_rows(
+                    self._service_returning_rows(), "sheet-id", tab,
+                )
+
+                self.assertEqual(header, ["Email"])
+                self.assertEqual(rows, [["applicant@example.com"]])
+
+    def test_accepts_a_range_starting_at_row_one(self) -> None:
+        header, _ = read_sheet_rows(
+            self._service_returning_rows(), "sheet-id", "A1:Z",
+        )
+
+        self.assertEqual(header, ["Email"])
+
+    def test_rejects_a_row_anchored_range_without_calling_sheets(self) -> None:
+        service = MagicMock()
+
+        with self.assertRaises(ValueError):
+            read_sheet_rows(service, "sheet-id", "Sheet1!A2:Z")
+
+        service.spreadsheets.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -45,6 +45,21 @@ def is_drive_folder_url(url: str) -> bool:
     return bool(url) and bool(_DRIVE_FOLDER_PATTERN.search(url))
 
 
+def _range_start_row(sheet_range: str) -> int | None:
+    """Row the range's start anchor refers to, or None when the range is
+    a bare tab name or has no row anchor (both start at row 1).
+
+    The anchor is only read when the value actually is A1 notation — it
+    has a "!" or a ":". A bare "Round2" is a tab name, not column A row
+    2, and rejecting it would break sheets whose tabs are named that way.
+    """
+    if "!" not in sheet_range and ":" not in sheet_range:
+        return None
+    start = sheet_range.split("!")[-1].split(":")[0]
+    match = re.fullmatch(r"[A-Za-z]+(\d+)?", start)
+    return int(match.group(1)) if match and match.group(1) else None
+
+
 def _credentials(service_account_path: str):
     return service_account.Credentials.from_service_account_file(
         service_account_path, scopes=SCOPES
@@ -101,6 +116,15 @@ def read_sheet_rows(sheets_service, sheet_id: str, sheet_range: str, header_row:
     per-column header row; set header_row=2 for those, so column-name
     lookups land on the actual question text, not a merged group label.
     """
+    start_row = _range_start_row(sheet_range)
+    if start_row not in (None, 1):
+        raise ValueError(
+            f"Range '{sheet_range}' starts at row {start_row}; row-anchored "
+            "ranges are not supported (row math assumes the range starts "
+            "at row 1, so grades would be written to the wrong "
+            "applicants' rows). Use the tab name, or a range starting at "
+            "row 1."
+        )
     result = (
         sheets_service.spreadsheets()
         .values()

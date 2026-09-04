@@ -75,7 +75,8 @@ with st.sidebar:
     sheet_range_input = st.text_input(
         "Sheet tab / range",
         value=_default_sheet_range,
-        help="Tab name (e.g. 'Grading Final'), or a full A1 range.",
+        help="Tab name (e.g. 'Grading Final'), or an A1 range starting "
+        "at row 1.",
     )
     header_row_input = st.number_input(
         "Header row",
