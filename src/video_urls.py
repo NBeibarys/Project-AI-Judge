@@ -70,7 +70,7 @@ class ResourceMetadata:
 
 
 @dataclass(frozen=True)
-class ResolvedVideo:
+class ResolvedMedia:
     """A validated media reference shared by the analyst and grader-head.
 
     Exactly one of `uri`/`data` carries the actual media: Tier-1 (URL
@@ -346,7 +346,7 @@ class _VideoMetadataParser(HTMLParser):
 def _validate_direct_video(
     metadata: ResourceMetadata,
     declared_mime: str | None = None,
-) -> ResolvedVideo | None:
+) -> ResolvedMedia | None:
     """Return only media Gemini can fetch within its documented external limit."""
 
     if metadata.content_type in SUPPORTED_VIDEO_MIME_TYPES:
@@ -362,7 +362,7 @@ def _validate_direct_video(
         and metadata.content_length > MAX_EXTERNAL_VIDEO_BYTES
     ):
         raise VideoResolutionError("Video exceeds Gemini's 100 MB external URL limit.")
-    return ResolvedVideo(
+    return ResolvedMedia(
         uri=metadata.final_url,
         mime_type=mime_type,
         source="direct_video",
@@ -415,7 +415,7 @@ def resolve_video_url(
     url: str,
     *,
     metadata_fetcher: Callable[[str], ResourceMetadata] = _request_metadata,
-) -> ResolvedVideo:
+) -> ResolvedMedia:
     """Resolve any standards-compliant public video link without video download."""
 
     submitted_url = (url or "").strip()
@@ -424,7 +424,7 @@ def resolve_video_url(
         # Google's native YouTube input explicitly omits MIME. Query noise is
         # removed because a dangling timestamp (for example, trailing ``&t``)
         # makes Vertex report LOGIN_REQUIRED even though the video is public.
-        return ResolvedVideo(
+        return ResolvedMedia(
             canonicalize_youtube_url(submitted_url),
             None,
             "youtube",
@@ -456,7 +456,7 @@ def resolve_video_url(
                 continue
             candidate = _validate_direct_video(candidate_metadata, declared_mime)
             if candidate is not None:
-                return ResolvedVideo(
+                return ResolvedMedia(
                     candidate.uri,
                     candidate.mime_type,
                     source,
@@ -464,7 +464,7 @@ def resolve_video_url(
 
     # No direct video found at this URL (not YouTube, not a directly
     # fetchable video file, no discoverable video metadata on the page).
-    # Previously this returned a "webpage" ResolvedVideo for the analyst's
+    # Previously this returned a "webpage" ResolvedMedia for the analyst's
     # url_context tool to interpret live — removed after url_context caused
     # a real production failure (a 400 from its own ~15MB fetch cap on a
     # webpage video source) and, more fundamentally, because reading

@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from src.pipeline import process_row
-from src.video_urls import ResolvedVideo, VideoResolutionError
+from src.video_urls import ResolvedMedia, VideoResolutionError
 
 HEADER = ["Startup Name", "Video", "Segment Start", "Segment End"]
 ROW = [
@@ -30,13 +30,13 @@ class InlineVideoSegmentTests(unittest.TestCase):
     inline bytes, so a segmented row must escalate rather than be graded on
     the whole round recording (every other startup's pitch included)."""
 
-    @patch("src.pipeline.ingest_video_for_r2b")
+    @patch("src.pipeline.ingest_video")
     @patch("src.pipeline.resolve_video_url")
     def test_segmented_inline_video_escalates_without_grading(
         self, mock_resolve: MagicMock, mock_ingest: MagicMock
     ) -> None:
         mock_resolve.side_effect = VideoResolutionError("no direct video")
-        mock_ingest.return_value = ResolvedVideo(
+        mock_ingest.return_value = ResolvedMedia(
             uri="", mime_type="video/mp4", source="drive_upload", data=b"x",
         )
         checkpoint = MagicMock()

@@ -1,9 +1,5 @@
 """Synchronous batch-facing wrapper around the asynchronous ADK workflow.
 
-Naming note: r2b-prefixed names (_run_r2b, MAX_LLM_CALLS_R2B_VERIFY, and
-ingest_video_for_r2b in video_ingestion.py) are historical; this
-workflow and its limits serve all three programs.
-
 All programs use the separate-head architecture:
   1. Run the analyst->grader VERIFY loop ONCE (bounded by
      ProgramConfig.max_verify_iterations; 2 for every current program). The
@@ -116,7 +112,7 @@ def cancel_all_active() -> None:
 #   the cap is a safety ceiling, and a sample that hits it is excluded
 #   from the average by _run_sample (not lost), so one slot of headroom
 #   costs nothing while making an unexpected extra call non-fatal.
-MAX_LLM_CALLS_R2B_VERIFY = 20
+MAX_LLM_CALLS_VERIFY = 20
 MAX_LLM_CALLS_HEAD = 2
 
 
@@ -154,7 +150,7 @@ class AdkReviewWorkflow:
     def _build_parts(self, state: dict, include_media: bool = True) -> list:
         """Build the multimodal input parts for an agent run.
 
-        Video/pitch-deck media arrives one of two ways (see ResolvedVideo in
+        Video/pitch-deck media arrives one of two ways (see ResolvedMedia in
         video_urls.py): in-memory bytes (state["*_data"] — Tier-2 downloads
         on Vertex AI, no Files API there) → Part.from_bytes, or a URI Gemini
         can fetch itself (state["*_url"] — a plain public URL for YouTube/
@@ -168,7 +164,7 @@ class AdkReviewWorkflow:
         ProgramConfig) — only the text Part (raw_row_text + any error/
         chart-text notes) is returned. This is what keeps N_SAMPLES
         concurrent Head calls lightweight enough to parallelize safely;
-        see workflow.py's _run_r2b for the concurrency history.
+        see workflow.py's _run_review for the concurrency history.
         """
         parts = []
         if include_media:
@@ -240,7 +236,7 @@ class AdkReviewWorkflow:
     # Verify loop (analyst -> grader, bounded by max_verify_iterations)
     # ------------------------------------------------------------------
 
-    async def _run_r2b_verify_loop(self, state: dict) -> dict:
+    async def _run_verify_loop(self, state: dict) -> dict:
         """Run the analyst->grader verify loop ONCE.
 
         Returns the session state, which includes ``evidence_approved``
@@ -280,7 +276,7 @@ class AdkReviewWorkflow:
             user_id=user_id,
             session_id=session_id,
             new_message=types.Content(role="user", parts=parts),
-            run_config=RunConfig(max_llm_calls=MAX_LLM_CALLS_R2B_VERIFY),
+            run_config=RunConfig(max_llm_calls=MAX_LLM_CALLS_VERIFY),
         ):
             pass
         session = await session_service.get_session(
@@ -493,11 +489,11 @@ class AdkReviewWorkflow:
             "human_review_flag": bool(flag_reasons),
         }
 
-    async def _run_r2b(self, state: dict) -> dict:
+    async def _run_review(self, state: dict) -> dict:
         """Verify loop once, then Head N_SAMPLES times, average."""
         # Step 1: verify loop (analyst -> grader, bounded by
         # ProgramConfig.max_verify_iterations).
-        verify_state = await self._run_r2b_verify_loop(state)
+        verify_state = await self._run_verify_loop(state)
 
         # If the verify loop exhausted without approval, it already set
         # final_result + human_review_flag. Return as-is.
@@ -586,7 +582,7 @@ class AdkReviewWorkflow:
 
     async def _invoke_async(self, state: dict) -> dict:
         """Run the review workflow and return final state with final_result."""
-        return await self._run_r2b(state)
+        return await self._run_review(state)
 
     def invoke(self, state: dict) -> dict:
         loop = _thread_event_loop()
@@ -608,7 +604,7 @@ def _convert_named_head(flat: dict, criterion_fields: dict[str, str]) -> dict:
     Direct indexing on purpose: every criterion, rationale, final_score,
     and confidence field on the named schemas is required with no default,
     so a missing key means validation was bypassed somewhere. A KeyError
-    here fails that one Head sample (caught per-sample in _run_r2b and
+    here fails that one Head sample (caught per-sample in _run_review and
     excluded from the average) instead of silently substituting a
     mid-scale score, which the previous .get(field, 5) defaults could do.
     """

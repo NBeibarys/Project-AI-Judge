@@ -6,14 +6,14 @@ from src.adk_agents.schemas import (
     RUBRIC_CRITERIA_R2B,
     AlchemistHeadScore,
     FellowshipV2HeadScore,
-    R2BHeadScoreNamed,
+    R2BHeadScore,
 )
 from src.adk_agents.workflow import _convert_named_head
 
 SCHEMAS = [
     (FellowshipV2HeadScore, RUBRIC_CRITERIA),
     (AlchemistHeadScore, RUBRIC_CRITERIA_ALCHEMIST),
-    (R2BHeadScoreNamed, RUBRIC_CRITERIA_R2B),
+    (R2BHeadScore, RUBRIC_CRITERIA_R2B),
 ]
 
 

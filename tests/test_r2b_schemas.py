@@ -1,11 +1,11 @@
 import unittest
 
-from src.adk_agents.schemas import R2BHeadScoreNamed
+from src.adk_agents.schemas import R2BHeadScore
 
 
 class R2BSchemaTests(unittest.TestCase):
     def test_r2b_head_schema_requests_each_rationale_before_its_score(self) -> None:
-        scoring_fields = list(R2BHeadScoreNamed.model_fields)[:12]
+        scoring_fields = list(R2BHeadScore.model_fields)[:12]
 
         self.assertEqual(
             scoring_fields,

@@ -36,8 +36,8 @@ from .google_clients import (
     write_reasoning_only,
     write_row_result,
 )
-from .video_urls import ResolvedVideo, VideoResolutionError, resolve_video_url
-from .video_ingestion import ingest_pitch_deck, ingest_video_for_r2b
+from .video_urls import ResolvedMedia, VideoResolutionError, resolve_video_url
+from .video_ingestion import ingest_pitch_deck, ingest_video
 from .round_segments import (
     SEGMENT_END_COLUMN,
     SEGMENT_START_COLUMN,
@@ -538,7 +538,7 @@ def process_row(
         #      YouTube natively, direct HTTPS videos ≤100MB, and webpages
         #      with discoverable video metadata (og:video / <video> / JSON-LD).
         #   2. If Tier-1 fails outright, or the URL is a Google Drive link,
-        #      fall back to Tier-2 (ingest_video_for_r2b) which downloads via
+        #      fall back to Tier-2 (ingest_video) which downloads via
         #      the Drive API and uploads to Files API / inline bytes so the
         #      analyst receives the video as a native Part.
         #   3. If BOTH fail — not YouTube, not Drive, no direct video file
@@ -549,7 +549,7 @@ def process_row(
         #      scoring it as "no video submitted" would unfairly penalize
         #      that, so this short-circuits to human review below instead
         #      of entering the LLM pipeline at all.
-        resolved_video: ResolvedVideo | None = None
+        resolved_video: ResolvedMedia | None = None
         try:
             resolved_video = resolve_video_url(submitted_video_url)
         except VideoResolutionError as exc:
@@ -562,7 +562,7 @@ def process_row(
                 # Any other directly-fetchable, non-YouTube URL also needs
                 # to go through Tier-2 now — not to force a download (Tier-2
                 # itself only downloads when the file is actually over
-                # Vertex's 15MB URI-fetch limit; see ingest_video_for_r2b),
+                # Vertex's 15MB URI-fetch limit; see ingest_video),
                 # but because Tier-1 alone has no way to make that
                 # size-aware decision.
                 "youtube" not in resolved_video.uri
@@ -571,7 +571,7 @@ def process_row(
         )
         if needs_tier2:
             try:
-                resolved_video = ingest_video_for_r2b(
+                resolved_video = ingest_video(
                     submitted_video_url,
                     config.service_account_path,
                 )
@@ -767,7 +767,7 @@ def process_row(
             criterion_scores = {}
             criterion_rationale = {}
             if score == 0:
-                # Grader-side disqualification (agent.py's R2BApprovalGate,
+                # Grader-side disqualification (agent.py's ApprovalGate,
                 # triggered by disqualifying_issue_found on the grader's
                 # verdict) sets reasoning to plain text — "Application
                 # scored 0: confirmed contradiction — ..." — unlike

@@ -1,8 +1,7 @@
 """Tier-2 media ingestion: download video and pitch-deck sources that
 video_urls.py cannot resolve to a Gemini-fetchable URI, then hand the
 bytes to Gemini so the agents receive the media as a native multimodal
-Part. Used by every program (R2B, Fellowship V2, Alchemist), despite the
-ingest_video_for_r2b function name.
+Part. Used by every program (R2B, Fellowship V2, Alchemist).
 
 Scope of this module:
   - Google Drive share links (download via Drive API)
@@ -30,10 +29,10 @@ not, the download 404s and the caller treats it as "no video" — criterion 6
 (Presentation & Clarity) then scores 1 with rationale "No video submitted."
 
 Backend: downloads are held entirely in memory, never written to disk.
-  - On Vertex AI: the Files API isn't available, so ResolvedVideo.data
+  - On Vertex AI: the Files API isn't available, so ResolvedMedia.data
     carries the raw bytes directly for inline Part.from_bytes.
   - On the Developer API (API key): bytes are streamed straight into the
-    Gemini Files API via an in-memory buffer; ResolvedVideo.uri carries the
+    Gemini Files API via an in-memory buffer; ResolvedMedia.uri carries the
     resulting file URI. The Files API auto-expires objects after 48h, so no
     explicit cleanup is needed there either.
 Holding bytes in memory instead of a temp file avoids a pointless
@@ -57,7 +56,7 @@ from urllib.request import Request
 
 from .google_clients import extract_drive_file_id, is_drive_folder_url
 from .video_urls import (
-    ResolvedVideo,
+    ResolvedMedia,
     VideoResolutionError,
     _public_https_host,
     resolve_video_url,
@@ -169,7 +168,7 @@ def _transcode_to_mp4(data: bytes) -> bytes:
     """Re-encode arbitrary video bytes to MP4 (H.264/AAC) in memory.
 
     Only video/mp4 is confirmed to work with Vertex AI's inline
-    Part.from_bytes video input (see ingest_video_for_r2b's docstring) — a
+    Part.from_bytes video input (see ingest_video's docstring) — a
     real .webm sent inline, even labeled correctly, gets a 400 from Gemini.
     Runs ffmpeg as a subprocess piping bytes via stdin/stdout (pipe:0/pipe:1)
     — nothing touches disk. Re-encodes rather than stream-copies: copying
@@ -375,7 +374,7 @@ def _upload_or_wrap(
 ) -> tuple[Optional[str], Optional[bytes]]:
     """Turn downloaded bytes into whatever the workflow needs to build a Part.
 
-    Returns (uri, data) — exactly one is non-None, matching ResolvedVideo's
+    Returns (uri, data) — exactly one is non-None, matching ResolvedMedia's
     contract:
       - On Vertex AI: the Files API isn't available, so this just hands the
         bytes straight back for inline Part.from_bytes. No network call.
@@ -456,7 +455,7 @@ def _https_pdf_head_metadata(url: str) -> tuple[Optional[str], Optional[int]]:
         return None, None
 
 
-def _finalize_downloaded_video(data: bytes, mime_type: str, source: str) -> ResolvedVideo:
+def _finalize_downloaded_video(data: bytes, mime_type: str, source: str) -> ResolvedMedia:
     """Shared post-download processing: transcode/shrink for Vertex's inline
     limits, then upload-or-wrap. Used by both the Drive-download and the
     oversized-direct-URL paths below, which otherwise duplicated this."""
@@ -483,28 +482,28 @@ def _finalize_downloaded_video(data: bytes, mime_type: str, source: str) -> Reso
         # whole row down.
         data = _shrink_video_to_fit(data, VERTEX_INLINE_VIDEO_MAX_BYTES)
     uri, inline_data = _upload_or_wrap(data, mime_type=mime_type)
-    return ResolvedVideo(
+    return ResolvedMedia(
         uri=uri or "", mime_type=mime_type, source=source, data=inline_data,
         original_size_bytes=original_size_bytes,
     )
 
 
-def ingest_video_for_r2b(
+def ingest_video(
     submitted_url: str,
     service_account_path: str,
-) -> ResolvedVideo:
+) -> ResolvedMedia:
     """Resolve a submitted video URL for R2B grading.
 
     Tries Tier-1 (video_urls.resolve_video_url) first — it's the cheap path
     and covers YouTube natively without download. If Tier-1 resolves a real
     video, returns that result. Otherwise falls back to Tier-2: download
     the source from Google Drive via the Drive API, returning a
-    ResolvedVideo with the media as in-memory bytes (Vertex) or a Files
+    ResolvedMedia with the media as in-memory bytes (Vertex) or a Files
     API URI (Developer API). If neither resolves, raises — the caller
     routes that to human review.
     """
     # Tier 1 first.
-    resolved: Optional[ResolvedVideo] = None
+    resolved: Optional[ResolvedMedia] = None
     try:
         resolved = resolve_video_url(submitted_url)
     except VideoResolutionError:
@@ -787,7 +786,7 @@ def ingest_pitch_deck(
     submitted_url: str,
     service_account_path: str,
     analyzer_model: str = "",
-) -> ResolvedVideo:
+) -> ResolvedMedia:
     """Resolve a submitted pitch deck link for Alchemist grading.
 
     Handles three source shapes:
@@ -806,7 +805,7 @@ def ingest_pitch_deck(
     The downloaded PDF's bytes are handed to Gemini directly (Vertex) or
     uploaded to the Gemini Files API (Developer API). The Files API
     auto-expires the object after 48 hours, so no cleanup is needed there.
-    The returned ResolvedVideo carries mime_type=application/pdf.
+    The returned ResolvedMedia carries mime_type=application/pdf.
     """
     try:
         # Google Slides: export as PDF via HTTPS.
@@ -846,7 +845,7 @@ def ingest_pitch_deck(
                     # in its own right rather than inheriting the HEAD
                     # request's guard — never emit an unvalidated file_uri.
                     _public_https_host(submitted_url)
-                    return ResolvedVideo(
+                    return ResolvedMedia(
                         uri=submitted_url,
                         mime_type=PITCH_DECK_MIME_TYPE,
                         source="pitch_deck_direct",
@@ -887,7 +886,7 @@ def ingest_pitch_deck(
         chart_text = _read_chart_images(chart_images, analyzer_model) if analyzer_model else ""
 
         uri, inline_data = _upload_or_wrap(data, mime_type=PITCH_DECK_MIME_TYPE)
-        return ResolvedVideo(
+        return ResolvedMedia(
             uri=uri or "",
             mime_type=PITCH_DECK_MIME_TYPE,
             source="pitch_deck_upload",

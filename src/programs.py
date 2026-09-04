@@ -80,13 +80,13 @@ class ProgramConfig:
     # zeroing is the human reviewer's call, never automatic.
     contradiction_auto_zero: bool = True
     # Max analyst<->grader verify-loop iterations before escalating to
-    # human review (see agent.py's build_root_agent/R2BApprovalGate/
-    # r2b_gate_decision — shared across all programs despite the r2b-
-    # specific naming). Default 3 preserves existing Alchemist/Fellowship
-    # V2 behavior. R2B sets 2: most rows converge in 1-2 rounds, the third
-    # iteration was the tail case, and both analyst and grader re-process
-    # the full pitch video every iteration — capping this directly bounds
-    # R2B's worst-case per-row latency, which is video-processing-bound.
+    # human review (see agent.py's build_root_agent/ApprovalGate/
+    # gate_decision, shared across all programs). Default 3 preserves
+    # existing Alchemist/Fellowship V2 behavior. R2B sets 2: most rows
+    # converge in 1-2 rounds, the third iteration was the tail case, and
+    # both analyst and grader re-process the full pitch video every
+    # iteration — capping this directly bounds R2B's worst-case per-row
+    # latency, which is video-processing-bound.
     max_verify_iterations: int = 3
     # Whether the Head sees raw media (video/deck Parts) at all, vs. only
     # the analyst's text evidence report (which the grader already

@@ -1,10 +1,7 @@
 """Google ADK agents for the review workflow.
 
-Naming note: R2B-prefixed names (R2BApprovalGate, R2BGraderVerdict) are
-historical; this machinery is shared by all three programs.
-
 All programs use the separate-head architecture with 3 distinct roles:
-  analyst -> grader -> R2BApprovalGate, in a LoopAgent (bounded by
+  analyst -> grader -> ApprovalGate, in a LoopAgent (bounded by
     ProgramConfig.max_verify_iterations).
     - analyst (LLM): extracts evidence per criterion. Does NOT score.
     - grader (LLM, temp=0): verifies analyst evidence only. Does NOT score.
@@ -35,7 +32,7 @@ from ..programs import ProgramConfig, get_program_config
 from .schemas import (
     ANALYST_SCHEMA_BY_PROGRAM,
     HEAD_SCHEMA_BY_PROGRAM,
-    R2BGraderVerdict,
+    GraderVerdict,
 )
 
 # Grader/Head/Analyst temperature: the LLM-as-judge literature
@@ -111,19 +108,19 @@ def _as_dict(value) -> dict:
 # Gate: verify-only grader, no scoring here. The Head scores after.
 # ---------------------------------------------------------------------------
 
-def r2b_gate_decision(verdict: dict, attempt: int, max_iterations: int) -> tuple[bool, bool]:
+def gate_decision(verdict: dict, attempt: int, max_iterations: int) -> tuple[bool, bool]:
     """Return (approved, exhausted) for the analyst->grader verify-loop routing.
 
-    Shared by all programs (despite the r2b-specific name — see
-    R2BApprovalGate). approve=true means evidence is grounded and complete;
-    the gate exits the loop so the Head can score. max_iterations comes from
-    ProgramConfig.max_verify_iterations, passed in by the caller rather than
-    hardcoded here — the loop's own max_iterations and this exhaustion
-    check used to be two separately-hardcoded "3"s that could drift apart
-    (lowering one without the other leaves the gate's exhaustion path unable
-    to ever trigger via attempt count, since the loop hard-stops first). A
+    Shared by all programs. approve=true means evidence is grounded and
+    complete; the gate exits the loop so the Head can score.
+    max_iterations comes from ProgramConfig.max_verify_iterations, passed
+    in by the caller rather than hardcoded here — the loop's own
+    max_iterations and this exhaustion check used to be two
+    separately-hardcoded "3"s that could drift apart (lowering one without
+    the other leaves the gate's exhaustion path unable to ever trigger via
+    attempt count, since the loop hard-stops first). A
     confirmed disqualifying issue (see ``disqualifying_issue_found`` in
-    R2BGraderVerdict) always counts as exhausted immediately, regardless of
+    GraderVerdict) always counts as exhausted immediately, regardless of
     attempt count — a lie can't be fixed by another analyst revision.
     """
     approved = bool(verdict.get("approved"))
@@ -132,8 +129,8 @@ def r2b_gate_decision(verdict: dict, attempt: int, max_iterations: int) -> tuple
     return approved, exhausted
 
 
-class R2BApprovalGate(BaseAgent):
-    """Zero-model routing step for the analyst->grader verify loop (all programs).
+class ApprovalGate(BaseAgent):
+    """Zero-model routing step for the analyst->grader verify loop.
 
     Reads the grader's verify verdict. If approved, marks the evidence as
     approved and exits the loop (the Head scores separately, after). If
@@ -164,7 +161,7 @@ class R2BApprovalGate(BaseAgent):
         state = ctx.session.state
         attempt = int(state.get("attempt", 1))
         verdict = _as_dict(state.get("grader_verdict", {}))
-        approved, exhausted = r2b_gate_decision(verdict, attempt, self.max_iterations)
+        approved, exhausted = gate_decision(verdict, attempt, self.max_iterations)
         disqualified = (
             bool(verdict.get("disqualifying_issue_found"))
             and self.contradiction_auto_zero
@@ -252,8 +249,8 @@ def build_root_agent(
 ) -> LoopAgent:
     """Build the analyst->grader review loop.
 
-    The grader VERIFIES ONLY (R2BGraderVerdict schema, no score). The
-    R2BApprovalGate exits the loop on approval without scoring — the Head
+    The grader VERIFIES ONLY (GraderVerdict schema, no score). The
+    ApprovalGate exits the loop on approval without scoring — the Head
     scores separately (see build_head_agent) after the loop, so it can be
     re-run for multi-sample averaging without re-running the expensive
     analyst->grader loop.
@@ -359,13 +356,13 @@ def build_root_agent(
             tool_config=_build_tool_config(grader_model),
         ),
         instruction=program_config.grader_instruction,
-        output_schema=R2BGraderVerdict,
+        output_schema=GraderVerdict,
         output_key="grader_verdict",
         # url_context removed — see analyst's tools comment above.
         tools=[],
         timeout=240,
     )
-    gate = R2BApprovalGate(
+    gate = ApprovalGate(
         name="approval_gate",
         contradiction_auto_zero=program_config.contradiction_auto_zero,
         max_iterations=program_config.max_verify_iterations,

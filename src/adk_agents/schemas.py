@@ -1,13 +1,10 @@
 """Strict structured-response contracts for evidence extraction and grading.
 
-Naming note: R2B-prefixed names (R2BGraderVerdict, R2BHeadScoreNamed)
-are historical; this machinery is shared by all three programs.
-
 All programs use the separate-head architecture with 3 distinct roles:
 
   - analyst  -> per-program named evidence schema (extract evidence only,
                 no score)
-  - grader   -> R2BGraderVerdict   (verify only: approve/reject + feedback)
+  - grader   -> GraderVerdict   (verify only: approve/reject + feedback)
   - head     -> per-program named score schema (score only, after approval)
 
 The grader never scores; the head never verifies. This separation is what
@@ -20,7 +17,7 @@ schema, which the genai SDK serializes as ``additional_properties``. The
 Gemini Developer API (API key) rejects this field with 400
 INVALID_ARGUMENT ("Unknown name 'additional_properties'"); Vertex AI
 accepted it. Each named schema declares every criterion as a required,
-bounded field, and R2BGraderVerdict's ``model_validator`` enforces the
+bounded field, and GraderVerdict's ``model_validator`` enforces the
 verdict contract, so extra-field rejection at the schema level is not
 required.
 """
@@ -163,7 +160,7 @@ class R2BAnalystReport(BaseModel):
 # R2B contracts: verify and score split across two agents.
 # ---------------------------------------------------------------------------
 
-class R2BGraderVerdict(BaseModel):
+class GraderVerdict(BaseModel):
     """The R2B grader VERIFIES ONLY — it does not score.
 
     approve=true means the analyst evidence is grounded, real, and covers all
@@ -179,7 +176,7 @@ class R2BGraderVerdict(BaseModel):
     # This is distinct from approved=false for an ordinary revisable evidence
     # gap: a real contradiction/fraud can't be fixed by asking the analyst to
     # revise, so it must end the review loop immediately with a score of 0
-    # instead of looping to exhaustion. See R2BApprovalGate.
+    # instead of looping to exhaustion. See ApprovalGate.
     disqualifying_issue_found: bool = False
     disqualifying_issue_type: Literal[
         "none", "contradiction", "fraud", "suspicious_application"
@@ -187,7 +184,7 @@ class R2BGraderVerdict(BaseModel):
     disqualifying_issue_reason: str = ""
 
     @model_validator(mode="after")
-    def enforce_decision_contract(self) -> "R2BGraderVerdict":
+    def enforce_decision_contract(self) -> "GraderVerdict":
         if not self.approved and not self.feedback.strip():
             raise ValueError("rejected verdicts require actionable feedback")
         # Approved with feedback is allowed (minor notes) and deliberately
@@ -208,7 +205,7 @@ class R2BGraderVerdict(BaseModel):
 class FellowshipV2HeadScore(BaseModel):
     """Explicit Head scorer schema with all 9 Fellowship criteria as named fields.
 
-    Same purpose as R2BHeadScoreNamed, for the Fellowship V2 rubric.
+    Same purpose as R2BHeadScore, for the Fellowship V2 rubric.
     Explicit field names so Gemini knows exactly what keys to fill: a
     generic dict[str, int] produces empty results because the model
     doesn't know the criterion names.
@@ -216,7 +213,7 @@ class FellowshipV2HeadScore(BaseModel):
     Field order matters here, not just the prompt text: structured-output
     generation follows field declaration order, so each criterion's
     rationale field is declared immediately before its score field
-    (matching R2BHeadScoreNamed's/AlchemistHeadScore's pattern) — an
+    (matching R2BHeadScore's/AlchemistHeadScore's pattern) — an
     earlier version of this schema listed all 9 scores first and all 9
     rationales after, which silently contradicted its own
     "rationale-before-score" claim in FELLOWSHIP_V2_HEAD_INSTRUCTION.
@@ -257,7 +254,7 @@ class FellowshipV2HeadScore(BaseModel):
     Communication_quality: int = Field(ge=1, le=10)
     final_score: float = Field(ge=1, le=10)
     confidence: Literal["low", "medium", "high"]
-    # See R2BHeadScoreNamed's disqualification fields — same contract.
+    # See R2BHeadScore's disqualification fields — same contract.
     contradiction_found: bool = False
     contradiction_reason: str = ""
     disqualifying_issue_found: bool = False
@@ -340,7 +337,7 @@ class AlchemistHeadScore(BaseModel):
     Field order matters here, not just the prompt text: structured-output
     generation follows field declaration order, so each criterion's
     rationale field is declared immediately before its score field
-    (matching R2BHeadScoreNamed's pattern) — an earlier version of this
+    (matching R2BHeadScore's pattern) — an earlier version of this
     schema listed all 4 scores first and all 4 rationales after, which
     silently contradicted its own "rationale-before-score" claim above.
     """
@@ -362,7 +359,7 @@ class AlchemistHeadScore(BaseModel):
     Team_Strength: int = Field(ge=1, le=10)
     final_score: float = Field(ge=1, le=10)
     confidence: Literal["low", "medium", "high"]
-    # See R2BHeadScoreNamed's disqualification fields — same contract.
+    # See R2BHeadScore's disqualification fields — same contract.
     contradiction_found: bool = False
     contradiction_reason: str = ""
     disqualifying_issue_found: bool = False
@@ -372,7 +369,7 @@ class AlchemistHeadScore(BaseModel):
     disqualifying_issue_reason: str = ""
 
 
-class R2BHeadScoreNamed(BaseModel):
+class R2BHeadScore(BaseModel):
     """Explicit head-scoring schema for the R2B rubric with concrete field names."""
     # See FellowshipV2HeadScore.CRITERION_FIELDS.
     CRITERION_FIELDS: ClassVar[dict[str, str]] = {
@@ -426,5 +423,5 @@ ANALYST_SCHEMA_BY_PROGRAM: dict[str, type[BaseModel]] = {
 HEAD_SCHEMA_BY_PROGRAM: dict[str, type[BaseModel]] = {
     "fellowship_v2": FellowshipV2HeadScore,
     "alchemist": AlchemistHeadScore,
-    "r2b": R2BHeadScoreNamed,
+    "r2b": R2BHeadScore,
 }
