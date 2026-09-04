@@ -21,7 +21,7 @@ bounded field, and R2BGraderVerdict's ``model_validator`` enforces the
 verdict contract, so extra-field rejection at the schema level is not
 required.
 """
-from typing import Literal, Optional
+from typing import ClassVar, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -217,6 +217,22 @@ class FellowshipV2HeadScore(BaseModel):
     rationales after, which silently contradicted its own
     "rationale-before-score" claim in FELLOWSHIP_V2_HEAD_INSTRUCTION.
     """
+    # Field name -> rubric criterion name. Consumed by workflow.py's
+    # _convert_named_head to flatten this schema's output into the
+    # criterion_scores/criterion_rationale dicts the averaging code uses.
+    # Lives next to the field declarations so the two cannot drift apart.
+    CRITERION_FIELDS: ClassVar[dict[str, str]] = {
+        "Originality": "Originality",
+        "Approach": "Approach",
+        "Personal_connection": "Personal connection",
+        "Concreteness": "Concreteness",
+        "Credibility_in_context": "Credibility in context",
+        "Trajectory": "Trajectory",
+        "Program_fit": "Program fit",
+        "Regional_relevance": "Regional relevance",
+        "Communication_quality": "Communication quality",
+    }
+
     Originality_rationale: str = Field(min_length=1)
     Originality: int = Field(ge=1, le=10)
     Approach_rationale: str = Field(min_length=1)
@@ -324,6 +340,14 @@ class AlchemistHeadScore(BaseModel):
     schema listed all 4 scores first and all 4 rationales after, which
     silently contradicted its own "rationale-before-score" claim above.
     """
+    # See FellowshipV2HeadScore.CRITERION_FIELDS.
+    CRITERION_FIELDS: ClassVar[dict[str, str]] = {
+        "Product_MVP_Innovation": "Product/MVP & Innovation",
+        "Market_Potential": "Market Potential",
+        "Scalability_US_Market": "Scalability & Readiness for the U.S. Market",
+        "Team_Strength": "Team Strength",
+    }
+
     Product_MVP_Innovation_rationale: str = Field(min_length=1)
     Product_MVP_Innovation: int = Field(ge=1, le=10)
     Market_Potential_rationale: str = Field(min_length=1)
@@ -346,6 +370,16 @@ class AlchemistHeadScore(BaseModel):
 
 class R2BHeadScoreNamed(BaseModel):
     """Explicit head-scoring schema for the R2B rubric with concrete field names."""
+    # See FellowshipV2HeadScore.CRITERION_FIELDS.
+    CRITERION_FIELDS: ClassVar[dict[str, str]] = {
+        "Problem_Solution": "Problem & Solution",
+        "Market_Potential": "Market Potential",
+        "Product_MVP_Innovation": "Product/MVP & Innovation",
+        "Team_Strength": "Team Strength",
+        "Business_Model": "Business Model",
+        "Presentation_Clarity": "Presentation & Clarity",
+    }
+
     Problem_Solution_rationale: str = Field(min_length=1)
     Problem_Solution: int = Field(ge=1, le=10)
     Market_Potential_rationale: str = Field(min_length=1)

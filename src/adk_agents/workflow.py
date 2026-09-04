@@ -35,6 +35,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from .agent import build_head_agent, build_root_agent
+from .schemas import HEAD_SCHEMA_BY_PROGRAM
 from ..programs import ProgramConfig
 
 APP_NAME = "fellowship_review"
@@ -323,99 +324,13 @@ class AdkReviewWorkflow:
             raise RuntimeError("Head agent produced no output.")
         result = _as_dict(head_output)
 
-        # Convert flat/named schema outputs (Fellowship V2, Alchemist, R2B)
-        # to the criterion_scores / criterion_rationale dict format that
-        # _average_head_samples expects.
-        if self.program_config.program == "fellowship_v2" and "criterion_scores" not in result:
-            result = self._convert_fellowship_v2_head(result)
-        elif self.program_config.program == "alchemist" and "criterion_scores" not in result:
-            result = self._convert_alchemist_head(result)
-        elif self.program_config.program == "r2b" and "criterion_scores" not in result:
-            result = self._convert_r2b_head(result)
+        # Convert the named schema's flat fields to the criterion_scores /
+        # criterion_rationale dict format that _average_head_samples expects.
+        if "criterion_scores" not in result:
+            schema = HEAD_SCHEMA_BY_PROGRAM[self.program_config.program]
+            result = _convert_named_head(result, schema.CRITERION_FIELDS)
 
         return result
-
-    def _convert_fellowship_v2_head(self, flat: dict) -> dict:
-        """Convert FellowshipV2HeadScore flat fields to dict format."""
-        criteria_map = {
-            "Originality": "Originality",
-            "Approach": "Approach",
-            "Personal_connection": "Personal connection",
-            "Concreteness": "Concreteness",
-            "Credibility_in_context": "Credibility in context",
-            "Trajectory": "Trajectory",
-            "Program_fit": "Program fit",
-            "Regional_relevance": "Regional relevance",
-            "Communication_quality": "Communication quality",
-        }
-        criterion_scores = {}
-        criterion_rationale = {}
-        for field_name, criterion_name in criteria_map.items():
-            criterion_scores[criterion_name] = flat.get(field_name, 5)
-            criterion_rationale[criterion_name] = flat.get(f"{field_name}_rationale", "")
-        return {
-            "criterion_scores": criterion_scores,
-            "criterion_rationale": criterion_rationale,
-            "final_score": flat.get("final_score", 5.0),
-            "confidence": flat.get("confidence", "medium"),
-            "contradiction_found": flat.get("contradiction_found", False),
-            "contradiction_reason": flat.get("contradiction_reason", ""),
-            "disqualifying_issue_found": flat.get("disqualifying_issue_found", False),
-            "disqualifying_issue_type": flat.get("disqualifying_issue_type", "none"),
-            "disqualifying_issue_reason": flat.get("disqualifying_issue_reason", ""),
-        }
-
-    def _convert_alchemist_head(self, flat: dict) -> dict:
-        """Convert AlchemistHeadScore flat fields to dict format."""
-        criteria_map = {
-            "Product_MVP_Innovation": "Product/MVP & Innovation",
-            "Market_Potential": "Market Potential",
-            "Scalability_US_Market": "Scalability & Readiness for the U.S. Market",
-            "Team_Strength": "Team Strength",
-        }
-        criterion_scores = {}
-        criterion_rationale = {}
-        for field_name, criterion_name in criteria_map.items():
-            criterion_scores[criterion_name] = flat.get(field_name, 5)
-            criterion_rationale[criterion_name] = flat.get(f"{field_name}_rationale", "")
-        return {
-            "criterion_scores": criterion_scores,
-            "criterion_rationale": criterion_rationale,
-            "final_score": flat.get("final_score", 5.0),
-            "confidence": flat.get("confidence", "medium"),
-            "contradiction_found": flat.get("contradiction_found", False),
-            "contradiction_reason": flat.get("contradiction_reason", ""),
-            "disqualifying_issue_found": flat.get("disqualifying_issue_found", False),
-            "disqualifying_issue_type": flat.get("disqualifying_issue_type", "none"),
-            "disqualifying_issue_reason": flat.get("disqualifying_issue_reason", ""),
-        }
-
-    def _convert_r2b_head(self, flat: dict) -> dict:
-        """Convert R2BHeadScoreNamed flat fields to dict format."""
-        criteria_map = {
-            "Problem_Solution": "Problem & Solution",
-            "Market_Potential": "Market Potential",
-            "Product_MVP_Innovation": "Product/MVP & Innovation",
-            "Team_Strength": "Team Strength",
-            "Business_Model": "Business Model",
-            "Presentation_Clarity": "Presentation & Clarity",
-        }
-        criterion_scores = {}
-        criterion_rationale = {}
-        for field_name, criterion_name in criteria_map.items():
-            criterion_scores[criterion_name] = flat.get(field_name, 5)
-            criterion_rationale[criterion_name] = flat.get(f"{field_name}_rationale", "")
-        return {
-            "criterion_scores": criterion_scores,
-            "criterion_rationale": criterion_rationale,
-            "final_score": flat.get("final_score", 5.0),
-            "confidence": flat.get("confidence", "medium"),
-            "contradiction_found": flat.get("contradiction_found", False),
-            "contradiction_reason": flat.get("contradiction_reason", ""),
-            "disqualifying_issue_found": flat.get("disqualifying_issue_found", False),
-            "disqualifying_issue_type": flat.get("disqualifying_issue_type", "none"),
-            "disqualifying_issue_reason": flat.get("disqualifying_issue_reason", ""),
-        }
 
     def _average_head_samples(self, samples: list[dict]) -> dict:
         """Average criterion scores across N_SAMPLES Head runs.
@@ -649,6 +564,37 @@ class AdkReviewWorkflow:
         finally:
             with _active_lock:
                 _active_tasks.pop(row_id, None)
+
+
+def _convert_named_head(flat: dict, criterion_fields: dict[str, str]) -> dict:
+    """Flatten a named head schema's output into the generic dict shape
+    _average_head_samples expects.
+
+    Direct indexing on purpose: every criterion, rationale, final_score,
+    and confidence field on the named schemas is required with no default,
+    so a missing key means validation was bypassed somewhere. A KeyError
+    here fails that one Head sample (caught per-sample in _run_r2b and
+    excluded from the average) instead of silently substituting a
+    mid-scale score, which the previous .get(field, 5) defaults could do.
+    """
+    criterion_scores = {
+        criterion: flat[field] for field, criterion in criterion_fields.items()
+    }
+    criterion_rationale = {
+        criterion: flat[f"{field}_rationale"]
+        for field, criterion in criterion_fields.items()
+    }
+    return {
+        "criterion_scores": criterion_scores,
+        "criterion_rationale": criterion_rationale,
+        "final_score": flat["final_score"],
+        "confidence": flat["confidence"],
+        "contradiction_found": flat.get("contradiction_found", False),
+        "contradiction_reason": flat.get("contradiction_reason", ""),
+        "disqualifying_issue_found": flat.get("disqualifying_issue_found", False),
+        "disqualifying_issue_type": flat.get("disqualifying_issue_type", "none"),
+        "disqualifying_issue_reason": flat.get("disqualifying_issue_reason", ""),
+    }
 
 
 def _as_dict(value) -> dict:
