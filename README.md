@@ -37,7 +37,8 @@ a standing bias toward escalating to a human reviewer over silently guessing.
   instead of waiting out the batch.
 - **Server-side YouTube clipping.** Operator-entered segment timestamps turn a
   full round recording into per-startup virtual clips via Gemini video
-  offsets: no downloads, no cutting (`src/round_segments.py`).
+  offsets: no downloads, no cutting (`src/round_segments.py` parses the
+  timestamps, `src/adk_agents/workflow.py` applies the offsets).
 
 ## How one row is graded
 
@@ -50,10 +51,11 @@ flowchart TD
     deck -->|yes| ingest["Ingest deck, pre-read chart slides to text"]
     deck -->|no| video["Resolve video: Tier 1 URI, else Tier 2 download"]
     ingest --> video
-    video -->|unresolvable| human["Human review, no model call"]
+    video -->|"unresolvable, no required deck"| human["Human review, no model call"]
+    video -->|"unresolvable, deck already ingested"| analyst["Analyst: extract evidence"]
     video --> analyst["Analyst: extract evidence"]
     analyst --> grader{"Grader: verify only"}
-    grader -->|"reject, twice at most"| analyst
+    grader -->|"reject: one revision"| analyst
     grader -->|approve| head["Head x N_SAMPLES, text evidence only"]
     grader -->|"iteration cap"| human
     head -->|"all samples fail"| human
@@ -136,13 +138,13 @@ failed.
   the path by measured size; image-only deck slides are pre-read to text in
   one bundled call because models read charts reliably in isolation but not
   inside a large multimodal context (arXiv:2406.11230)
-  (`src/video_ingestion.py`).
+  (`src/video_ingestion.py`, `src/adk_agents/workflow.py`).
 - **Real sheets are messy.** Checkpoints are scoped per program and per sheet
   after a global path made one program adopt another's rows; the same email
   appears on genuinely different applications (5 silent collisions in one
   sheet); a batch with 11 no-shows reported 13 failed when 2 had failed; a
   trailing space in a header showed a fully graded sheet as empty
-  (`src/config.py`, `src/pipeline.py`, `src/google_clients.py`).
+  (`src/config.py`, `src/pipeline.py`, `src/google_clients.py`, `app.py`).
 
 ## Security model and known limitations
 
@@ -153,8 +155,9 @@ Defended:
 
 - Every applicant-driven fetch, in both the metadata tier and the download
   tier, is HTTPS-only; rejects private, loopback, link-local, and NAT64
-  addresses; validates every redirect hop; and runs through an opener that
-  cannot dispatch `file:`, `ftp:`, or `data:` schemes at all
+  addresses; and validates every redirect hop. Download-tier requests run
+  through an opener that cannot dispatch `file:`, `ftp:`, or `data:` schemes
+  at all; the metadata tier blocks those schemes at its HTTPS-only check
   (`src/video_urls.py`, `src/video_ingestion.py`).
 - The Drive API is invoked only for links on Google hosts, so an applicant
   cannot point the service account at an arbitrary file ID
@@ -186,7 +189,9 @@ publication cleanup should carry):
 - Transitive dependencies carry published advisories (the direct pins are
   clean); upgrades are scheduled.
 - The single-column final score uses banker's rounding (4.5 rounds to 4, 5.5
-  to 6) and is written as a text cell.
+  to 6). It reaches the sheet as a text cell only on that path's batched
+  write, used when the score and reasoning columns are adjacent; the
+  non-adjacent fallback and the multi-column path write it as a number.
 - Column-name matching differs across the three resolvers (exact,
   whitespace-normalized, case-folded).
 - A corrupt checkpoint file crashes the batch rather than recovering.
@@ -199,7 +204,9 @@ sheet, tab and header row, map which columns hold the score, the reasoning and
 the applicant name, choose which columns are hidden from the model, run a batch
 or a single row, and stop a run mid-flight (which cancels in-flight model calls
 rather than waiting them out). It binds to loopback and has no authentication:
-remote access means an SSH tunnel.
+remote access means an SSH tunnel. The binding is pinned in two places, so
+neither launch path can widen it by accident: `.streamlit/config.toml` sets
+`server.address = "127.0.0.1"`, and `run_app.sh` passes the same flag.
 
 ![Grading dashboard](docs/img/dashboard.png)
 
@@ -222,8 +229,9 @@ plus `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`) or the Gemini Developer
 API (`GOOGLE_API_KEY`); the backends genuinely differ (Files API and tool-config
 handling versus inline bytes). The reference configuration in `.env.example`
 uses gemini-3.5-flash for all three roles; production has also run the
-cheaper gemini-3.5-flash-lite tier, whose lower reliability is documented
-there and is what the verify loop and multi-sample averaging mitigate.
+cheaper flash-lite tiers (gemini-3.1-flash-lite, later gemini-3.5-flash-lite),
+whose lower reliability is documented there and is what the verify loop and
+multi-sample averaging mitigate.
 
 Required, no defaults; each raises at startup if unset:
 
@@ -261,11 +269,13 @@ python -m unittest discover -s tests -p 'test_*.py'
 48 tests, all offline: no network, no Sheets, no model calls. They cover the
 deterministic core: timestamp parsing and segment bounds, YouTube URL
 canonicalization, no-show detection, schema field ordering and head-output
-conversion, the cancellation paths including a regression test for the
-executor-queue hang, and the SSRF and host-allowlist guards. They do not cover
-the agents, Sheets writes, media ingestion, or the averaging arithmetic; those
-were validated against real production sheets, which is honest but not a
-substitute for tests.
+conversion, config env handling and sheet-range rejection, escalation write
+shapes and the inline-video segment escalation, the cancellation paths
+including a regression test for the executor-queue hang, and the SSRF and
+host-allowlist guards. They do not cover the agents, Sheets writes, or media
+ingestion, and the averaging arithmetic only through its empty-input
+escalation test; the rest was validated against real production sheets,
+which is honest but not a substitute for tests.
 
 ## Design notes
 
@@ -285,19 +295,21 @@ The arc, with reasons the log alone does not show:
 - 2026-06-27: initial multimodal fellowship review on Google ADK.
 - 2026-07-06: R2B and Alchemist programs added; a 4-agent web-verifier
   pipeline tried and removed the same day; Cloud Run deployment added.
-- 2026-07-07: switched to the Gemini Developer API, then back to Vertex AI
-  within two weeks; the model-aware tool config and schema fixes remain.
-- 2026-07-10: R2B video-only grading with one sheet column per criterion;
-  internal-contradiction auto-zero added 07-11 and reversed 07-12 after 7 of 7
-  live auto-zeros proved false.
+- 2026-07-07: switched to the Gemini Developer API, then made both backends
+  first-class; production runs on Vertex AI today, and the model-aware tool
+  config and schema fixes remain.
+- 2026-07-10 to 07-11: R2B video-only grading with one sheet column per
+  criterion; internal-contradiction auto-zero added 07-11 and reversed 07-12
+  after 7 of 7 live auto-zeros proved false.
 - 2026-07-15: round indexing and server-side YouTube segment clipping; the
   automatic timestamp proposer later removed in favor of operator-entered
   boundaries.
 - 2026-07-17: Cloud Run deployment files removed.
-- 2026-07-20: Alchemist and Fellowship V2 aligned to R2B's tuning (media-less
-  head, priced contradictions, 2-iteration verify cap).
-- 2026-07-21: dashboard column mapping, single-row test grading, and the
-  kill-in-flight Stop button.
+- 2026-07-20: R2B rows with no video link are skipped outright instead of
+  being graded as "no video submitted".
+- 2026-07-21: Alchemist and Fellowship V2 aligned to R2B's tuning (media-less
+  head, priced contradictions, 2-iteration verify cap); dashboard column
+  mapping, single-row test grading, and the kill-in-flight Stop button.
 
 Dates and pivot reasons come from the private development archive, which stays
 private because early revisions contain applicant data.
@@ -311,7 +323,7 @@ src/config.py             Env-driven config, fail-fast validation
 src/programs.py           Per-program rubrics, prompts, sheet geometry
 src/pipeline.py           Batch driver: gating, concurrency, write-back
 src/checkpoint.py         Resumable, pseudonymized row state
-src/google_clients.py     Sheets and Drive access, column resolution
+src/google_clients.py     Sheets access, column resolution, Drive link parsing
 src/video_urls.py         Tier-1 URL resolution, SSRF and size guards
 src/video_ingestion.py    Tier-2 download, transcode, deck ingestion
 src/adk_agents/           Agents, prompts, schemas, workflow

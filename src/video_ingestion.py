@@ -25,8 +25,9 @@ review instead.
 Auth: the Drive download reuses the same service-account JSON as Sheets,
 but with the drive.readonly scope. The Drive file MUST be shared with the
 service-account email (the same one the Sheet is shared with). If it is
-not, the download 404s and the caller treats it as "no video" — criterion 6
-(Presentation & Clarity) then scores 1 with rationale "No video submitted."
+not, the download 404s and the caller routes the row to human review: a
+submitted link that cannot be resolved is never silently graded as "no
+video submitted".
 
 Backend: downloads are held entirely in memory, never written to disk.
   - On Vertex AI: the Files API isn't available, so ResolvedMedia.data
@@ -518,7 +519,7 @@ def ingest_video(
     submitted_url: str,
     service_account_path: str,
 ) -> ResolvedMedia:
-    """Resolve a submitted video URL for R2B grading.
+    """Resolve a submitted video URL for grading.
 
     Tries Tier-1 (video_urls.resolve_video_url) first — it's the cheap path
     and covers YouTube natively without download. If Tier-1 resolves a real

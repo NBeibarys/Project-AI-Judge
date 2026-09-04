@@ -686,12 +686,13 @@ def process_row(
                 f"{startup_name}."
             )
 
-    # R2B is video-primary and criterion 6 (Presentation & Clarity) requires
-    # video evidence. The R2B prompts instruct the grader to score criterion 6
-    # as 1 with rationale "No video submitted" when no video is available.
-    # Make the no-video state unambiguous to the analyst by setting a
-    # video_error even when no URL was submitted at all — the workflow
-    # appends this to the analyst's text input as "VIDEO UNAVAILABLE: ...".
+    # Fellowship V2 is video_primary, and its rows with no video link at
+    # all still grade, on application text alone: make the missing-video
+    # state unambiguous to the analyst by setting a video_error even when
+    # no URL was submitted; the workflow appends it to the analyst's text
+    # input as "VIDEO UNAVAILABLE: ...". R2B never reaches this branch: a
+    # row with no video link is skipped outright earlier, and a submitted
+    # but unresolvable link returns to human review before this point.
     # Checks both video_url and video_data: a Tier-2 in-memory download on
     # Vertex AI leaves video_url as "" (no Files API URI on that backend),
     # so video_url alone would wrongly read as "no video" and overwrite a

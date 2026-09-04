@@ -41,6 +41,10 @@
 > - **The Testing section's `run_one` helper was removed**; single-row
 >   testing goes through `run_batch(target_row_number=...)` in the
 >   dashboard.
+> - **Identifier renames (not reversals):** the shared classes this design
+>   calls `R2BGraderVerdict` and `R2BApprovalGate` are `GraderVerdict` and
+>   `ApprovalGate` in the code today, renamed when the machinery stopped
+>   being R2B-only.
 
 ## Context
 

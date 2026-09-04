@@ -162,16 +162,17 @@ class R2BAnalystReport(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# R2B contracts: verify and score split across two agents.
+# Verify and score split across two agents: the shared grader verdict, then
+# the per-program head schemas.
 # ---------------------------------------------------------------------------
 
 
 class GraderVerdict(BaseModel):
-    """The R2B grader VERIFIES ONLY — it does not score.
+    """The grader VERIFIES ONLY — it does not score.
 
-    approve=true means the analyst evidence is grounded, real, and covers all
-    6 criteria (with video evidence for criterion 6). approve=false carries
-    actionable feedback for the analyst to revise.
+    approve=true means the analyst evidence is grounded, real, and covers
+    every rubric criterion. approve=false carries actionable feedback for
+    the analyst to revise.
     """
 
     approved: bool
