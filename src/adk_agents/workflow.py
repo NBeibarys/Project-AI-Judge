@@ -92,14 +92,6 @@ def cancel_all_active() -> None:
         loop.call_soon_threadsafe(task.cancel)
 
 
-# Default number of Head samples to run and average. The literature
-# (arXiv:2606.26185, Perea multi-judge playbook) recommends 2-3 samples;
-# 3 is the deployed default (see config.py's N_SAMPLES env var), balancing
-# variance reduction against cost on every row. This constant is never
-# actually consulted at runtime — pipeline.py's _build_workflow always
-# passes n_samples=config.n_samples explicitly — but is kept in sync with
-# that deployed value so it's accurate if ever used as a fallback.
-DEFAULT_N_SAMPLES = 3
 # Cap LLM calls per sample:
 #   Verify loop: analyst + grader × ProgramConfig.max_verify_iterations —
 #   4 worst case for every program now (2 iterations each; R2B, Alchemist,
@@ -118,7 +110,11 @@ class AdkReviewWorkflow:
         grader_model: str,
         program_config: ProgramConfig,
         head_model: str | None = None,
-        n_samples: int = DEFAULT_N_SAMPLES,
+        # Head samples to run and average. The literature (arXiv:2606.26185,
+        # Perea multi-judge playbook) recommends 2-3; the batch pipeline
+        # always passes config.n_samples explicitly, so this default only
+        # applies to direct construction.
+        n_samples: int = 3,
     ):
         # certifi provides a consistent trust store across deployments.
         os.environ["SSL_CERT_FILE"] = certifi.where()
@@ -216,8 +212,6 @@ class AdkReviewWorkflow:
             )
         if state.get("video_error"):
             text += f"\n\nVIDEO UNAVAILABLE: {state['video_error']}"
-        if state.get("pitch_deck_error"):
-            text += f"\n\nPITCH DECK UNAVAILABLE: {state['pitch_deck_error']}"
         parts.append(types.Part(text=text))
         return parts
 
@@ -296,10 +290,7 @@ class AdkReviewWorkflow:
         # The Head sees the SAME approved evidence each run. We inject the
         # analyst_report into the session state so the Head's instruction
         # template ({analyst_report}) resolves to the approved evidence.
-        initial_state: dict = {
-            "analyst_report": approved_evidence,
-            "sample_idx": sample_idx,
-        }
+        initial_state: dict = {"analyst_report": approved_evidence}
         await session_service.create_session(
             app_name=APP_NAME,
             user_id=user_id,
@@ -524,7 +515,6 @@ class AdkReviewWorkflow:
             ),
         )
         selected_rationale = closest.get("criterion_rationale", {})
-        selected_confidence = closest.get("confidence", "medium")
 
         # Conservative confidence: pick the lowest across all valid samples.
         rank = {"low": 0, "medium": 1, "high": 2, "n/a": -1}
@@ -550,7 +540,7 @@ class AdkReviewWorkflow:
         return {
             "score": avg_final,
             "reasoning": json.dumps(payload, ensure_ascii=False),
-            "confidence": consensus_conf or selected_confidence,
+            "confidence": consensus_conf,
             "human_review_flag": bool(flag_reasons),
         }
 

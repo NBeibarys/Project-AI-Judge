@@ -268,10 +268,9 @@ class R2BGraderVerdict(BaseModel):
     def enforce_decision_contract(self) -> "R2BGraderVerdict":
         if not self.approved and not self.feedback.strip():
             raise ValueError("rejected verdicts require actionable feedback")
-        if self.approved and self.feedback.strip():
-            # Approved with feedback is allowed (minor notes), but the grader
-            # must not include scores — scoring is the Head's job.
-            pass
+        # Approved with feedback is allowed (minor notes) and deliberately
+        # unvalidated: the grader must not include scores, but that is a
+        # prompt-level rule, not something this contract can check.
         if self.disqualifying_issue_found:
             if self.approved:
                 raise ValueError(

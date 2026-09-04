@@ -25,8 +25,6 @@ from google.adk.agents import Agent, BaseAgent, InvocationContext, LoopAgent
 from google.adk.apps import App
 from google.adk.events import Event, EventActions
 from google.adk.models.google_llm import Gemini
-from google.genai import Client as GenAIClient
-from google.adk.tools import url_context
 from google.genai import types
 
 from ..programs import ProgramConfig, get_program_config
@@ -48,38 +46,6 @@ from .schemas import (
 # (hence multi-sample averaging of the Head), but it reduces run-to-run
 # jitter. Per spec all three agents run at temp=0.
 GRADER_TEMPERATURE = 0.0
-
-# Override Gemini's api_client to use the Developer API (API key) instead
-# of Vertex AI. When GOOGLE_API_KEY is set, all ADK Gemini calls route
-# through the Developer API, avoiding GCP billing entirely.
-_DEVELOPER_CLIENT = None
-if os.environ.get("GOOGLE_API_KEY"):
-    _DEVELOPER_CLIENT = GenAIClient(api_key=os.environ["GOOGLE_API_KEY"])
-
-class DeveloperGemini(Gemini):
-    """Gemini subclass that uses the Developer API via API key.
-
-    Falls back to the default Gemini (Vertex AI) when GOOGLE_API_KEY is
-    not set, preserving backward compatibility with Vertex deployments.
-
-    The Vertex fallback uses the base Gemini class's own @cached_property
-    api_client (via super()) — safe again now that workflow.py's
-    AdkReviewWorkflow.invoke() keeps one persistent event loop per worker
-    thread instead of a fresh asyncio.run() per row (see workflow.py's
-    _thread_event_loop). An earlier attempt fixed the resulting "RuntimeError:
-    Event loop is closed" by rebuilding an uncached client on every single
-    api_client access instead — that stopped the crash but leaked a new
-    HTTP connection per access (confirmed live: 45+ open sockets, ~20 stuck
-    in CLOSE-WAIT, for what should've been 1-2 rows). Fixing the actual
-    per-row event-loop lifecycle (workflow.py) makes caching safe again, so
-    this reverts to the library's normal behavior instead of working around it.
-    """
-
-    @property
-    def api_client(self):
-        if _DEVELOPER_CLIENT is not None:
-            return _DEVELOPER_CLIENT
-        return super().api_client
 
 # Determinism seed: Gemini supports a seed parameter so that the same input
 # produces the same output across runs. This makes the multi-sample Head
@@ -187,8 +153,10 @@ class R2BApprovalGate(BaseAgent):
     contradiction_auto_zero: bool = True
     # Mirrors ProgramConfig.max_verify_iterations — must match the same
     # LoopAgent's max_iterations (see build_root_agent) or the exhaustion
-    # path below can never trigger via attempt count.
-    max_iterations: int = 3
+    # path below can never trigger via attempt count. No default on
+    # purpose: a stale default here is exactly the drift this mirroring
+    # exists to prevent, so the caller must state the program's cap.
+    max_iterations: int
 
     async def _run_async_impl(
         self, ctx: InvocationContext
@@ -304,17 +272,6 @@ def build_root_agent(
     else:
         analyst_schema = AnalystReport
 
-    # Note: google_search was removed from the analyst because it conflicts
-    # with output_schema - the model does tool calls instead of producing
-    # structured JSON, causing all evidence to be rejected after 3 iterations.
-    # Web research will be implemented as a separate pre-processing step.
-    # url_context was also removed: it existed only for the "webpage with
-    # no discoverable direct video" fallback, which now raises instead of
-    # handing the analyst a page to interpret live (see video_urls.py) —
-    # it also caused a real production failure (a 400 from its own ~15MB
-    # fetch cap on a webpage source).
-    analyst_tools = []
-
     analyst = Agent(
         name="analyst",
         description="Extracts grounded rubric evidence from application text and video.",
@@ -369,7 +326,16 @@ def build_root_agent(
         instruction=program_config.analyst_instruction,
         output_schema=analyst_schema,
         output_key="analyst_report",
-        tools=analyst_tools,
+        # google_search was removed from the analyst because it conflicts
+        # with output_schema - the model does tool calls instead of producing
+        # structured JSON, causing all evidence to be rejected after 3 iterations.
+        # Web research will be implemented as a separate pre-processing step.
+        # url_context was also removed: it existed only for the "webpage with
+        # no discoverable direct video" fallback, which now raises instead of
+        # handing the analyst a page to interpret live (see video_urls.py) —
+        # it also caused a real production failure (a 400 from its own ~15MB
+        # fetch cap on a webpage source).
+        tools=[],
         timeout=240,
     )
     # Grader verifies only, does not score.
@@ -508,11 +474,8 @@ def build_head_agent(
         instruction=program_config.head_instruction,
         output_schema=head_schema,
         output_key="head_score",
-        # url_context is dead weight when the Head has no media/URLs to
-        # check at all (head_include_media=False, R2B) — kept for
-        # Alchemist/Fellowship V2, whose Head may reference applicant URLs
-        # from the analyst's evidence.
-        tools=[url_context] if program_config.head_include_media else [],
+        # url_context removed — see the analyst's tools comment above.
+        tools=[],
         timeout=240,
     )
 
