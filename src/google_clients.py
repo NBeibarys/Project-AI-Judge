@@ -303,6 +303,51 @@ def write_multi_row_result(
     ).execute(num_retries=5)
 
 
+def write_reasoning_only(
+    sheets_service,
+    sheet_id: str,
+    sheet_name: str,
+    sheet_row_number: int,
+    col_map: dict,
+    reasoning: str,
+):
+    """Write only the reasoning column, leaving the score cell as it is.
+
+    Used for human-review escalations so a row that already carries scores
+    keeps them: write_row_result blanks the score cell for a score of
+    None, which erased a real grade whenever an already-graded row was
+    re-graded (or force-graded) and then escalated.
+    """
+    letter = _col_letter(col_map["reasoning"] + 1)
+    sheets_service.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"{sheet_name}!{letter}{sheet_row_number}",
+        valueInputOption="RAW",
+        body={"values": [[reasoning]]},
+    ).execute(num_retries=5)
+
+
+def write_multi_notes_only(
+    sheets_service,
+    sheet_id: str,
+    sheet_name: str,
+    sheet_row_number: int,
+    col_map: dict,
+    notes: str,
+):
+    """Multi-column equivalent of write_reasoning_only: only the Comments/
+    Notes cell is written, so an escalation leaves every criterion score
+    and the Total Score exactly as the previous run left them.
+    """
+    letter = _col_letter(col_map["notes"] + 1)
+    sheets_service.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"{sheet_name}!{letter}{sheet_row_number}",
+        valueInputOption="RAW",
+        body={"values": [[notes]]},
+    ).execute(num_retries=5)
+
+
 def _col_letter(col_1_indexed: int) -> str:
     """1 -> A, 26 -> Z, 27 -> AA. Sheets API ranges use letters, not indices."""
     letters = ""

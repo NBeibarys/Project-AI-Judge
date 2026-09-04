@@ -1,7 +1,12 @@
 import unittest
 from unittest.mock import MagicMock
 
-from src.google_clients import extract_drive_file_id, read_sheet_rows
+from src.google_clients import (
+    extract_drive_file_id,
+    read_sheet_rows,
+    write_multi_notes_only,
+    write_reasoning_only,
+)
 from src.video_ingestion import _is_google_slides_url
 
 
@@ -85,6 +90,47 @@ class SheetRangeAnchorTests(unittest.TestCase):
             read_sheet_rows(service, "sheet-id", "Sheet1!A2:Z")
 
         service.spreadsheets.assert_not_called()
+
+
+class EscalationWriteTests(unittest.TestCase):
+    """A human-review escalation must not blank a grade the row already
+    carries: re-grading and "grade this row only" both force a re-run, and
+    a transient failure would otherwise wipe real scores off the sheet."""
+
+    @staticmethod
+    def _updates(service: MagicMock) -> list:
+        return service.spreadsheets.return_value.values.return_value.update.call_args_list
+
+    def test_reasoning_only_write_touches_no_other_cell(self) -> None:
+        service = MagicMock()
+
+        write_reasoning_only(
+            service, "sheet-id", "Grading Final", 7,
+            {"score": 3, "reasoning": 4}, "[NEEDS HUMAN REVIEW] failed",
+        )
+
+        updates = self._updates(service)
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0].kwargs["range"], "Grading Final!E7")
+        self.assertEqual(
+            updates[0].kwargs["body"], {"values": [["[NEEDS HUMAN REVIEW] failed"]]},
+        )
+
+    def test_multi_notes_only_write_touches_no_other_cell(self) -> None:
+        service = MagicMock()
+
+        write_multi_notes_only(
+            service, "sheet-id", "AI", 7,
+            {"criteria": {"Problem & Solution": 3}, "total_score": 9, "notes": 10},
+            "[NEEDS HUMAN REVIEW] failed",
+        )
+
+        updates = self._updates(service)
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0].kwargs["range"], "AI!K7")
+        self.assertEqual(
+            updates[0].kwargs["body"], {"values": [["[NEEDS HUMAN REVIEW] failed"]]},
+        )
 
 
 if __name__ == "__main__":

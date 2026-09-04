@@ -31,7 +31,9 @@ from .google_clients import (
     read_sheet_rows,
     resolve_multi_output_columns,
     resolve_output_columns,
+    write_multi_notes_only,
     write_multi_row_result,
+    write_reasoning_only,
     write_row_result,
 )
 from .video_urls import ResolvedVideo, VideoResolutionError, resolve_video_url
@@ -734,14 +736,12 @@ def process_row(
         # sheet's structure (which has formulas referencing specific
         # columns already).
         reasoning = f"[NEEDS HUMAN REVIEW] {reasoning}"
-        # Only blank the score when it's genuinely unknown (evidence never
-        # approved / all Head samples failed). A confirmed disqualification
-        # (lie/fraud/contradiction) already decided the score is 0 — that's
-        # a real, deliberate result, not an unresolved one, and blanking it
-        # here was silently erasing every disqualification override before
-        # it ever reached the sheet.
-        if score is None:
-            score = ""
+        # score stays as it is, including None. A confirmed disqualification
+        # (lie/fraud/contradiction) is a real, deliberate 0 and must reach
+        # the sheet; an unknown score (evidence never approved / all Head
+        # samples failed) stays None, and run_batch then writes the note
+        # WITHOUT touching the score cell, so a re-graded row keeps whatever
+        # grade it already had.
 
     # No GCS cleanup is needed: Tier-2 now uploads exclusively to the Gemini
     # Files API, which auto-expires objects after 48 hours. The previous
@@ -951,16 +951,30 @@ def run_batch(
                     # "13 failed" when only 2 rows genuinely failed.
                     skipped = True
                 else:
+                    # A result with no score is an escalation, not a grade:
+                    # write only the notes/reasoning cell so re-grading a
+                    # row that already has scores cannot erase them.
                     if config.program_config.criterion_column_names:
-                        write_multi_row_result(
-                            sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                            col_map, result["criterion_scores"], result["total_score"],
-                            result["notes"],
-                        )
-                    else:
+                        if result["criterion_scores"]:
+                            write_multi_row_result(
+                                sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+                                col_map, result["criterion_scores"], result["total_score"],
+                                result["notes"],
+                            )
+                        else:
+                            write_multi_notes_only(
+                                sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+                                col_map, result["notes"],
+                            )
+                    elif result["score"] is not None:
                         write_row_result(
                             sheets_service, config.sheet_id, sheet_name, sheet_row_number,
                             col_map, result["score"], result["reasoning"],
+                        )
+                    else:
+                        write_reasoning_only(
+                            sheets_service, config.sheet_id, sheet_name, sheet_row_number,
+                            col_map, result["reasoning"],
                         )
                     # Failed writes remain retryable rather than becoming lost grades.
                     checkpoint.mark_done(
@@ -1005,14 +1019,14 @@ def run_batch(
                         "Manual review required."
                     )
                     if config.program_config.criterion_column_names:
-                        write_multi_row_result(
+                        write_multi_notes_only(
                             sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                            col_map, {}, None, reasoning,
+                            col_map, reasoning,
                         )
                     else:
-                        write_row_result(
+                        write_reasoning_only(
                             sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                            col_map, "", reasoning,
+                            col_map, reasoning,
                         )
                     checkpoint.mark_done(row_id, True)
             done_count += 1
