@@ -43,6 +43,7 @@ import os
 import re
 import time
 from typing import Optional
+from urllib.parse import urlparse
 from urllib.request import Request
 
 from .google_clients import extract_drive_file_id, is_drive_folder_url
@@ -580,8 +581,17 @@ PITCH_DECK_MIME_TYPE = "application/pdf"
 def _is_google_slides_url(url: str) -> bool:
     """Google Slides URLs look like:
       https://docs.google.com/presentation/d/<ID>/...
+
+    Host and path are checked separately rather than as one substring:
+    the substring test also matched a URL that merely mentions the Slides
+    address elsewhere (https://evil.tld/#docs.google.com/presentation/...),
+    which would send _slides_export_url's regex looking for an ID on a
+    host we do not control.
     """
-    return "docs.google.com/presentation" in url.lower()
+    parsed = urlparse(url.lower())
+    return parsed.hostname == "docs.google.com" and parsed.path.startswith(
+        "/presentation/d/"
+    )
 
 
 def _slides_export_url(url: str) -> str:

@@ -6,6 +6,7 @@ needs Editor access on the Sheet.
 """
 import re
 from typing import Optional
+from urllib.parse import urlparse
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -13,6 +14,15 @@ from googleapiclient.discovery import build
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
+
+# Hosts whose links may be handed to the Drive API. The ID patterns below
+# match on any host, so without this list https://evil.tld/d/<ID> would
+# make the service account fetch a Drive file of the submitter's choosing
+# (a confused deputy: the file need only be readable by the account, not
+# by the applicant).
+_DRIVE_ALLOWED_HOSTS = frozenset(
+    {"drive.google.com", "drive.usercontent.google.com", "docs.google.com"}
+)
 
 # Matches both Drive URL shapes seen in form responses:
 #   .../file/d/<ID>/view   and   .../open?id=<ID>
@@ -53,6 +63,9 @@ def extract_drive_file_id(url: str) -> Optional[str]:
     we can't assume one fixed shape, so try each known pattern in order.
     """
     if not url:
+        return None
+    host = (urlparse(url).hostname or "").lower().rstrip(".")
+    if host not in _DRIVE_ALLOWED_HOSTS:
         return None
     for pattern in _DRIVE_ID_PATTERNS:
         match = pattern.search(url)
