@@ -13,8 +13,13 @@ import hashlib
 
 class Checkpoint:
     @staticmethod
-    def _key(row_id: str) -> str:
-        """Pseudonymize applicant identifiers before writing local state."""
+    def key_for(row_id: str) -> str:
+        """Pseudonymize applicant identifiers before writing local state.
+
+        Public because the dashboard reads the checkpoint file directly to
+        show per-row status; it must derive keys the same way this class
+        does rather than re-implementing the hash and drifting from it.
+        """
         return hashlib.sha256(row_id.encode("utf-8")).hexdigest()
 
     def __init__(self, path: str):
@@ -38,13 +43,13 @@ class Checkpoint:
 
     def is_done(self, row_id: str) -> bool:
         with self._lock:
-            entry = self._data.get(self._key(row_id))
+            entry = self._data.get(self.key_for(row_id))
             return bool(entry and entry.get("status") in ("done", "human_review"))
 
     def mark_done(self, row_id: str, human_review_flag: bool):
         with self._lock:
             # Resumption needs only routing state; grades remain in Sheets.
-            self._data[self._key(row_id)] = {
+            self._data[self.key_for(row_id)] = {
                 "status": "human_review" if human_review_flag else "done",
             }
             self._flush()
@@ -59,7 +64,7 @@ class Checkpoint:
         # a structurally broken source URL, or a file too large to ever
         # process within quota) and escalate instead of retrying forever.
         with self._lock:
-            key = self._key(row_id)
+            key = self.key_for(row_id)
             attempts = self._data.get(key, {}).get("attempts", 0) + 1
             self._data[key] = {"status": "failed", "error": error, "attempts": attempts}
             self._flush()

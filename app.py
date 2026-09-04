@@ -12,7 +12,6 @@ run, whether to re-grade already-graded rows, and checkpoint reset. The
 main area shows current sheet grading state and the results of the most
 recent run.
 """
-import hashlib
 import json
 import os
 import sys
@@ -30,6 +29,7 @@ if _REPO_DIR not in sys.path:
     sys.path.insert(0, _REPO_DIR)
 
 from src.adk_agents import cancel_all_active
+from src.checkpoint import Checkpoint
 from src.config import Config
 from src.pipeline import (
     run_batch,
@@ -616,7 +616,7 @@ for i, row in enumerate(rows):
         row_id = _derive_row_id(
             header, row, sheet_row_number, duplicate_emails, program_config=config.program_config,
         )
-        row_key = hashlib.sha256(row_id.encode("utf-8")).hexdigest()
+        row_key = Checkpoint.key_for(row_id)
         status = checkpoint_statuses.get(row_key)
         if status == "human_review":
             graded_count += 1
