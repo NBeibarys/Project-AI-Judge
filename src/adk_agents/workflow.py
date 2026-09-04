@@ -1,8 +1,13 @@
 """Synchronous batch-facing wrapper around the asynchronous ADK workflow.
 
+Naming note: r2b-prefixed names (_run_r2b, MAX_LLM_CALLS_R2B_VERIFY, and
+ingest_video_for_r2b in video_ingestion.py) are historical; this
+workflow and its limits serve all three programs.
+
 All programs use the separate-head architecture:
-  1. Run the analyst->grader VERIFY loop ONCE (max 3 iterations). The grader
-     does not score; it only approves or rejects the evidence.
+  1. Run the analyst->grader VERIFY loop ONCE (bounded by
+     ProgramConfig.max_verify_iterations; 2 for every current program). The
+     grader does not score; it only approves or rejects the evidence.
   2. If the evidence is approved, run the Head scorer N_SAMPLES times
      (default 3) at temp=0. Each Head run independently scores the SAME
      approved evidence.
@@ -11,16 +16,15 @@ All programs use the separate-head architecture:
      the averaged final score (closest-rationale selection).
   5. Final score = averaged; rationale = selected from closest run.
 
-Multi-sample averaging (research gap #5, arXiv:2606.26185): temp=0 does NOT
+Multi-sample averaging (arXiv:2606.26185): temp=0 does NOT
 fully eliminate variance in LLM judges due to floating-point non-determinism,
 batching, and backend routing. Averaging the Head's criterion scores across
 multiple runs reduces run-to-run jitter and yields a more stable score.
 Only the Head is re-run (cheap), not the whole analyst->grader loop (expensive).
 
 If a Head run fails (API error, schema validation), it is excluded from the
-average. If ALL Head runs fail, the row escalates to human review. If the
-verify loop itself fails to reach approval (3 rejections), the row escalates
-to human review without scoring.
+average. If ALL Head runs fail, the row escalates to human review. If the verify loop itself fails to reach approval within its iteration
+cap, the row escalates to human review without scoring.
 """
 import asyncio
 import json
@@ -50,8 +54,13 @@ APP_NAME = "fellowship_review"
 # already-closed loop, raising "RuntimeError: Event loop is closed" during
 # cleanup (confirmed live: 44 of 69 failures in a 100-row batch run at
 # MAX_CONCURRENCY=8). Keeping one loop alive for the thread's whole
-# lifetime — closed only when the thread pool shuts down — means cached
-# clients stay valid across rows instead of outliving their loop.
+# lifetime means cached clients stay valid across rows instead of
+# outliving their loop. Nothing closes these loops explicitly: they are
+# closed non-deterministically when GC reclaims the dead thread's locals
+# (measured: 20 finished worker threads held ~60 file descriptors open
+# until a gc.collect()). Closing them eagerly from a worker-exit hook is
+# deliberately deferred — closing a loop a cached ADK client still holds
+# is the exact shape that produced the incident above.
 _thread_local = threading.local()
 
 
@@ -105,7 +114,10 @@ def cancel_all_active() -> None:
 #   and Fellowship V2 all lowered this since the analyst/grader re-process
 #   the full video/deck every iteration). 20 gives headroom without being
 #   unbounded.
-#   Head: 1 call per run × N_SAMPLES.
+#   Head: 1 LLM call per run × N_SAMPLES. MAX_LLM_CALLS_HEAD is 2, not 1:
+#   the cap is a safety ceiling, and a sample that hits it is excluded
+#   from the average by _run_sample (not lost), so one slot of headroom
+#   costs nothing while making an unexpected extra call non-fatal.
 MAX_LLM_CALLS_R2B_VERIFY = 20
 MAX_LLM_CALLS_HEAD = 2
 
@@ -223,7 +235,7 @@ class AdkReviewWorkflow:
         return parts
 
     # ------------------------------------------------------------------
-    # Verify loop (analyst -> grader, max 3 iterations)
+    # Verify loop (analyst -> grader, bounded by max_verify_iterations)
     # ------------------------------------------------------------------
 
     async def _run_r2b_verify_loop(self, state: dict) -> dict:
@@ -232,8 +244,9 @@ class AdkReviewWorkflow:
         Returns the session state, which includes ``evidence_approved``
         (True if the grader approved the evidence) and ``analyst_report``
         (the approved evidence the Head will score). If the loop exhausted
-        3 attempts without approval, ``human_review_flag`` is True and
-        ``final_result`` carries the escalation message.
+        its attempt cap (ProgramConfig.max_verify_iterations) without
+        approval, ``human_review_flag`` is True and ``final_result``
+        carries the escalation message.
         """
         session_service = InMemorySessionService()
         runner = Runner(
@@ -480,7 +493,8 @@ class AdkReviewWorkflow:
 
     async def _run_r2b(self, state: dict) -> dict:
         """Verify loop once, then Head N_SAMPLES times, average."""
-        # Step 1: verify loop (analyst -> grader, max 3 iterations).
+        # Step 1: verify loop (analyst -> grader, bounded by
+        # ProgramConfig.max_verify_iterations).
         verify_state = await self._run_r2b_verify_loop(state)
 
         # If the verify loop exhausted without approval, it already set

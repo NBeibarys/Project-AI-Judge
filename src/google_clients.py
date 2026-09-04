@@ -111,7 +111,7 @@ def read_sheet_rows(sheets_service, sheet_id: str, sheet_range: str, header_row:
     offset to write results back to the correct row.
 
     header_row defaults to 1 (the common case: first row is the header).
-    Some sheets — e.g. this project's "Grading Final" — have a merged
+    Some sheets — e.g. this project's default grading tab — have a merged
     top label row (group headers like reviewer names) ABOVE the real
     per-column header row; set header_row=2 for those, so column-name
     lookups land on the actual question text, not a merged group label.

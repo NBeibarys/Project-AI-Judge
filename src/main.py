@@ -9,7 +9,6 @@ from .pipeline import run_batch
 
 
 def main():
-    # The maintained parser correctly handles quoting, escapes, and interpolation.
     load_dotenv(override=False)
     # No fallback: an unset PROGRAM must fail loudly here, not silently grade
     # whichever program happened to be the old default (a real source of

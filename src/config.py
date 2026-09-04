@@ -5,21 +5,21 @@ since a 100+ row run that dies on row 50 from a bad API key wastes
 real API spend.
 
 Multiple programs coexist (Fellowship V2, R2B, Alchemist). The active
-program is selected via the ``PROGRAM`` env var (default
-``fellowship_v2``); each program owns its own sheet-geometry env-var
-names so the sheets never collide. A single run_batch call is exactly one
-program — all rows in a batch share the same criteria set, so the
-module-level active-criteria slot set in schemas.py never races across
-programs within a batch.
+program is selected via the ``PROGRAM`` env var, which is required with
+no default (src/main.py fails fast when it is unset); each program owns
+its own sheet-geometry env-var names so the sheets never collide. A
+single run_batch call is exactly one program: every row in that batch is
+graded against one rubric, through that program's own output schemas.
 
-Gemini-only for now (no Claude credit on this account) — see project
-memory for the multi-provider history if Claude support needs reviving.
+Gemini-only for now (no Claude credit on this account) — earlier
+multi-provider experiments are recorded in the private development
+archive, not this repository.
 """
 import dataclasses
 import os
 from dataclasses import dataclass
 
-from .programs import ProgramConfig, get_program_config
+from .programs import DEFAULT_SHEET_RANGE, ProgramConfig, get_program_config
 
 
 def _env(name: str, default: str) -> str:
@@ -228,7 +228,7 @@ class Config:
         head_model = _env("HEAD_MODEL", grader_model)
 
         sheet_range = sheet_range_override or _env(
-            program_config.sheet_range_env, "Grading Final",
+            program_config.sheet_range_env, DEFAULT_SHEET_RANGE,
         )
         header_row = (
             header_row_override

@@ -1,7 +1,11 @@
 """Google ADK agents for the review workflow.
 
+Naming note: R2B-prefixed names (R2BApprovalGate, R2BGraderVerdict) are
+historical; this machinery is shared by all three programs.
+
 All programs use the separate-head architecture with 3 distinct roles:
-  analyst -> grader -> R2BApprovalGate, in a LoopAgent (max 3 iterations).
+  analyst -> grader -> R2BApprovalGate, in a LoopAgent (bounded by
+    ProgramConfig.max_verify_iterations).
     - analyst (LLM): extracts evidence per criterion. Does NOT score.
     - grader (LLM, temp=0): verifies analyst evidence only. Does NOT score.
       approve -> gate exits the loop; reject -> analyst revises.
@@ -45,7 +49,9 @@ GRADER_TEMPERATURE = 0.0
 # produces the same output across runs. This makes the multi-sample Head
 # averaging meaningful (residual variance comes only from backend routing,
 # not from the model's own sampling) and makes re-runs reproducible for
-# audit. Same seed for all three agents (analyst, grader, head).
+# audit. Same seed for all three agents (analyst, grader, head). The value
+# 7524 is arbitrary; any fixed constant works. What matters is that it
+# never changes, or re-runs stop being comparable to prior runs.
 DETERMINISM_SEED = 7524
 
 # On the Developer API (API key), the ADK routes output_schema through the
@@ -313,7 +319,8 @@ def build_root_agent(
         output_key="analyst_report",
         # google_search was removed from the analyst because it conflicts
         # with output_schema - the model does tool calls instead of producing
-        # structured JSON, causing all evidence to be rejected after 3 iterations.
+        # structured JSON, causing all evidence to be rejected once the
+        # verify loop hit its iteration cap.
         # Web research will be implemented as a separate pre-processing step.
         # url_context was also removed: it existed only for the "webpage with
         # no discoverable direct video" fallback, which now raises instead of

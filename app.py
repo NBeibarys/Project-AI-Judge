@@ -38,7 +38,7 @@ from src.pipeline import (
     _find_name_column_index,
     _resolve_name_column_index,
 )
-from src.programs import get_program_config
+from src.programs import DEFAULT_SHEET_RANGE, get_program_config
 from src.google_clients import get_sheets_service, read_sheet_rows
 
 PROGRAM_LABELS = {
@@ -58,7 +58,9 @@ with st.sidebar:
     )
     _program_config = get_program_config(program)
     _default_sheet_id = os.environ.get(_program_config.sheet_id_env, "")
-    _default_sheet_range = os.environ.get(_program_config.sheet_range_env, "Grading Final")
+    _default_sheet_range = os.environ.get(
+        _program_config.sheet_range_env, DEFAULT_SHEET_RANGE,
+    )
     _default_header_row = int(os.environ.get(
         _program_config.header_row_env, str(_program_config.default_header_row),
     ))
@@ -586,8 +588,9 @@ name_column_label = (
 )
 
 # A blank-score row with a human_review checkpoint status is still a
-# completed grade — the AI finished its 3 review attempts and correctly
-# escalated (e.g. pitch deck inaccessible), it just has no number. Only a
+# completed grade — the AI used up the verify loop's iteration cap and
+# correctly escalated (e.g. pitch deck inaccessible), it just has no
+# number. Only a
 # "failed" checkpoint status (a real technical error) counts as a mistake;
 # a row with no checkpoint entry yet just hasn't been attempted.
 duplicate_emails = _find_duplicate_emails(header, rows)

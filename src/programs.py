@@ -33,6 +33,11 @@ from .adk_agents.schemas import (
     RUBRIC_CRITERIA_R2B,
 )
 
+# Sheet tab used when a program's *_SHEET_RANGE env var is unset. Defined
+# here, next to the per-program sheet geometry, so config.py's fallback and
+# the dashboard's prefilled field cannot drift apart.
+DEFAULT_SHEET_RANGE = "Grading Final"
+
 ProgramName = Literal["fellowship_v2", "r2b", "alchemist"]
 
 
@@ -163,15 +168,19 @@ class ProgramConfig:
     # Per-program header exclusions for _build_raw_row_text: columns whose
     # header name is in excluded_header_names, OR whose lowercased header
     # contains any substring in excluded_header_substrings, are dropped from
-    # the text the analyzer sees. Each program owns its own list so e.g. the
-    # Alchemist's PII columns (timestamp/email/phone/...) don't leak into
-    # Fellowship's analyzer input (or vice versa). "ception" matches this
-    # sheet's "General Pereception" columns (the real header has a typo —
-    # an extra "e" after "Per" — "ception" is the common suffix of both the
-    # correct and the typo'd spelling, so it survives that) without
-    # hardcoding reviewer names, which change every cohort. Excluding these
-    # isn't just tidiness: feeding the AI a human's already-given score
-    # would anchor its judgment instead of producing an independent one.
+    # the text the analyzer sees. Each program owns its own list, and they
+    # exclude different things: only Alchemist drops PII columns
+    # (timestamp/email/phone/telegram/...), Fellowship V2 drops reviewer
+    # score columns, and R2B drops only its own output columns — so
+    # Fellowship V2 and R2B do send applicant contact details to the model.
+    # Extending the PII exclusions to every program is a recorded fix, gated
+    # on a live re-test because it changes prompt content. "ception" matches
+    # the Fellowship V2 sheet's "General Pereception" columns (that header
+    # has a typo — an extra "e" after "Per" — so "ception", the common
+    # suffix of both spellings, survives it) without hardcoding reviewer
+    # names, which change every cohort. Excluding them isn't just tidiness:
+    # feeding the AI a human's already-given score would anchor its judgment
+    # instead of producing an independent one.
     excluded_header_substrings: tuple = ()
     excluded_header_names: frozenset = frozenset({'', 'AI', 'AI_Reasoning', 'AI Reasoning', 'Total'})
 

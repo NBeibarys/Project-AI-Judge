@@ -1,7 +1,7 @@
 """
 Row-level resumable checkpoint — flat JSON keyed by row_id.
-Deliberately not LangGraph's own checkpointer: each row's graph run is
-a few seconds end-to-end, so there's no value in resuming mid-graph.
+Resumption is deliberately row-level, not mid-run: a single row's grading
+takes seconds end-to-end, so there is no value in resuming inside one.
 What matters at 100+ rows is skipping rows already graded on rerun
 (after a crash, rate-limit, or manual interrupt).
 """

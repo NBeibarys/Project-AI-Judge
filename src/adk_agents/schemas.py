@@ -1,5 +1,8 @@
 """Strict structured-response contracts for evidence extraction and grading.
 
+Naming note: R2B-prefixed names (R2BGraderVerdict, R2BHeadScoreNamed)
+are historical; this machinery is shared by all three programs.
+
 All programs use the separate-head architecture with 3 distinct roles:
 
   - analyst  -> per-program named evidence schema (extract evidence only,
@@ -8,7 +11,7 @@ All programs use the separate-head architecture with 3 distinct roles:
   - head     -> per-program named score schema (score only, after approval)
 
 The grader never scores; the head never verifies. This separation is what
-makes multi-sample averaging of the Head meaningful (research gap #5):
+makes multi-sample averaging of the Head meaningful (arXiv:2606.26185):
 only the Head is re-run, on the SAME approved evidence.
 
 NOTE: These schemas intentionally do NOT use Pydantic's ``extra="forbid"``.
@@ -69,8 +72,9 @@ class CriterionEvidence(BaseModel):
     """Grounded evidence and the qualification needed to interpret it."""
     evidence: str = Field(min_length=1)
     notes: str = Field(min_length=1)
-    # Cross-source consistency tag (Alchemist analyst only; no web search
-    # tool is attached — see agent.py's google_search removal note).
+    # Cross-source consistency tag (emitted by the Alchemist and
+    # Fellowship V2 analysts; no web search tool is attached, see
+    # agent.py's google_search removal note).
     # 'verified' = corroborated by another of the applicant's own sources;
     # 'unverified' = appears in only one source (DO NOT penalize);
     # 'contradicted' = two of the applicant's own sources conflict on the

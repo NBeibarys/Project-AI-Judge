@@ -1,8 +1,10 @@
-"""Resolve public video links without downloading video bodies.
+"""Resolve public media links without downloading their bodies.
 
-The resolver understands web standards rather than a fixed provider catalog.
-It reads response headers and a bounded amount of HTML metadata, while Gemini's
-URL-context tool handles semantically ambiguous webpages inside the analyst.
+The resolver understands web standards rather than a fixed provider catalog:
+it reads response headers and a bounded amount of HTML metadata. A page with
+no discoverable media is a resolution failure, not a fallback — the analyst's
+url_context tool used to read such pages live and was removed (see
+video_ingestion.py's module docstring for why).
 """
 
 import ipaddress

@@ -1,6 +1,8 @@
-"""Tier-2 video ingestion for R2B: download from sources video_urls.py
-cannot resolve to a Gemini-fetchable URI, then hand the bytes to Gemini
-so the analyst/grader receive the video as a native multimodal Part.
+"""Tier-2 media ingestion: download video and pitch-deck sources that
+video_urls.py cannot resolve to a Gemini-fetchable URI, then hand the
+bytes to Gemini so the agents receive the media as a native multimodal
+Part. Used by every program (R2B, Fellowship V2, Alchemist), despite the
+ingest_video_for_r2b function name.
 
 Scope of this module:
   - Google Drive share links (download via Drive API)
@@ -37,6 +39,10 @@ Backend: downloads are held entirely in memory, never written to disk.
 Holding bytes in memory instead of a temp file avoids a pointless
 write-then-read-back round trip, and means there's nothing left on disk to
 clean up after a row finishes.
+
+Requires the ffmpeg and ffprobe binaries on PATH (transcode to MP4,
+duration probing, size-targeted recompression); they are invoked as
+subprocesses and are not Python dependencies.
 """
 import io
 import os
@@ -852,10 +858,10 @@ def ingest_pitch_deck(
                     )
                 data = _download_https(submitted_url)
 
-            if len(data) > FILES_API_MAX_BYTES:
-                raise VideoResolutionError(
-                    "Pitch deck exceeds the 2GB size limit."
-                )
+        if len(data) > FILES_API_MAX_BYTES:
+            raise VideoResolutionError(
+                "Pitch deck exceeds the 2GB size limit."
+            )
 
         if not _looks_like_pdf(data):
             raise VideoResolutionError(

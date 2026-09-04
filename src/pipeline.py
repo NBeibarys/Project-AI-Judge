@@ -46,8 +46,12 @@ from .round_segments import (
 # excluded_header_substrings and excluded_header_names in src/programs.py.
 
 # After this many consecutive failures on the same row, stop retrying
-# blindly and escalate to human review instead — matches the "3 attempts"
-# convention used elsewhere in this codebase (e.g. R2B's verify loop).
+# blindly and escalate to human review instead. 3 keeps a genuinely
+# transient failure (download timeout, API rate limit) retryable on the
+# next run while bounding forever-retry on a row that fails the same way
+# every time (a structurally broken source URL, a file too large to ever
+# process within quota). Independent of the verify loop's iteration cap,
+# which is ProgramConfig.max_verify_iterations (2 for every program).
 FAILURE_ESCALATION_THRESHOLD = 3
 
 # How often run_batch's completion loop re-checks cancel_event when nothing
@@ -79,10 +83,12 @@ def _normalize_for_match(text: str) -> str:
 
 
 # Markers a human adds directly into the Startup Name cell for applicants
-# who didn't actually show up to pitch (confirmed real examples: "Example One -
-# won't pitch", "Example Two no response", "Example Co - didn't
-# respond"). Substring match on the normalized (lowercased, accent-
-# stripped) name — these rows are skipped entirely before any LLM call.
+# who didn't actually show up to pitch (patterns seen on production
+# sheets; the examples below use invented names): "Acme Robotics -
+# won't pitch", "Northwind Labs no response", "Bluepeak Systems -
+# didn't respond". Substring match on the normalized (lowercased,
+# accent-stripped) name; these rows are skipped entirely before any
+# LLM call.
 _NO_SHOW_MARKERS = (
     "no response",
     "not pitching",
@@ -392,8 +398,9 @@ def _retry_without_video(workflow, initial_state: dict, exc: Exception) -> dict:
 def _build_workflow(config: Config) -> AdkReviewWorkflow:
     """Construct the workflow with program-aware models and sample count.
 
-    Fellowship: single run (no multi-sample averaging).
-    R2B: verify loop once, then Head re-run n_samples times and averaged.
+    Every program uses the separate-head architecture: verify loop once,
+    then the Head re-run n_samples times and averaged. n_samples comes
+    from config for all programs alike.
     """
     return AdkReviewWorkflow(
         config.analyzer_model,
