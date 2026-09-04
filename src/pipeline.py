@@ -12,6 +12,7 @@ shared state between applicants — so a ThreadPoolExecutor is sufficient;
 no need for asyncio's added complexity for what's mostly I/O-bound work
 (API calls) anyway.
 """
+
 import asyncio
 import json
 import re
@@ -104,17 +105,14 @@ _NO_SHOW_MARKERS = (
     "didnt come",
     "did not come",
 )
-_NO_SHOW_COMPACT_MARKERS = tuple(
-    re.sub(r"[^a-z0-9]+", "", marker) for marker in _NO_SHOW_MARKERS
-)
+_NO_SHOW_COMPACT_MARKERS = tuple(re.sub(r"[^a-z0-9]+", "", marker) for marker in _NO_SHOW_MARKERS)
 
 
 def _is_no_show(startup_name: str) -> bool:
     name = _normalize_for_match(startup_name)
     compact_name = re.sub(r"[^a-z0-9]+", "", name)
-    return (
-        any(marker in name for marker in _NO_SHOW_MARKERS)
-        or any(marker in compact_name for marker in _NO_SHOW_COMPACT_MARKERS)
+    return any(marker in name for marker in _NO_SHOW_MARKERS) or any(
+        marker in compact_name for marker in _NO_SHOW_COMPACT_MARKERS
     )
 
 
@@ -296,7 +294,9 @@ def _build_raw_row_text(
     """
     lines = []
     for i, col in enumerate(header):
-        if col in excluded_header_names or any(sub in col.lower() for sub in excluded_header_substrings):
+        if col in excluded_header_names or any(
+            sub in col.lower() for sub in excluded_header_substrings
+        ):
             continue
         value = row[i] if i < len(row) else ""
         lines.append(f"{col}: {value}")
@@ -431,7 +431,11 @@ def process_row(
 
     _raise_if_cancelled()
     row_id = _derive_row_id(
-        header, row, sheet_row_number, duplicate_emails, program_config=config.program_config,
+        header,
+        row,
+        sheet_row_number,
+        duplicate_emails,
+        program_config=config.program_config,
     )
     if checkpoint.is_done(row_id) and not force:
         return row_id, None  # already graded in a prior run, nothing to write
@@ -484,13 +488,15 @@ def process_row(
             # No pitch deck = automatic 0 on all criteria, no API calls.
             return row_id, {
                 "score": 0,
-                "reasoning": json.dumps({
-                    "criterion_scores": {c: 0 for c in config.program_config.rubric_criteria},
-                    "criterion_rationale": {
-                        c: "No pitch deck submitted. Pitch deck is required for Alchemist evaluation."
-                        for c in config.program_config.rubric_criteria
-                    },
-                }),
+                "reasoning": json.dumps(
+                    {
+                        "criterion_scores": {c: 0 for c in config.program_config.rubric_criteria},
+                        "criterion_rationale": {
+                            c: "No pitch deck submitted. Pitch deck is required for Alchemist evaluation."
+                            for c in config.program_config.rubric_criteria
+                        },
+                    }
+                ),
                 "human_review_flag": True,
             }
         try:
@@ -517,13 +523,15 @@ def process_row(
             # silently-stuck "failed" checkpoint entry instead.
             return row_id, {
                 "score": 0,
-                "reasoning": json.dumps({
-                    "criterion_scores": {c: 0 for c in config.program_config.rubric_criteria},
-                    "criterion_rationale": {
-                        c: f"Pitch deck could not be accessed: {exc}"
-                        for c in config.program_config.rubric_criteria
-                    },
-                }),
+                "reasoning": json.dumps(
+                    {
+                        "criterion_scores": {c: 0 for c in config.program_config.rubric_criteria},
+                        "criterion_rationale": {
+                            c: f"Pitch deck could not be accessed: {exc}"
+                            for c in config.program_config.rubric_criteria
+                        },
+                    }
+                ),
                 "human_review_flag": True,
             }
 
@@ -565,8 +573,7 @@ def process_row(
                 # Vertex's 15MB URI-fetch limit; see ingest_video),
                 # but because Tier-1 alone has no way to make that
                 # size-aware decision.
-                "youtube" not in resolved_video.uri
-                and "youtu.be" not in resolved_video.uri
+                "youtube" not in resolved_video.uri and "youtu.be" not in resolved_video.uri
             )
         )
         if needs_tier2:
@@ -585,9 +592,7 @@ def process_row(
             initial_state["video_url"] = resolved_video.uri
             initial_state["video_data"] = resolved_video.data
             initial_state["video_mime_type"] = resolved_video.mime_type
-            initial_state["video_original_size_bytes"] = (
-                resolved_video.original_size_bytes
-            )
+            initial_state["video_original_size_bytes"] = resolved_video.original_size_bytes
             # Tier-2 succeeded: clear any stale error left by a Tier-1
             # failure. Without this, the workflow would both build the video
             # Part (video_url is set) AND append "VIDEO UNAVAILABLE: ..."
@@ -637,11 +642,7 @@ def process_row(
     # server-side, no cut files. Segments are entered by hand; there is no
     # automatic proposer (see round_segments.py's module docstring).
     segment_bounds = _read_segment_bounds(header, row)
-    if (
-        segment_bounds
-        and initial_state.get("video_data")
-        and not initial_state.get("video_url")
-    ):
+    if segment_bounds and initial_state.get("video_data") and not initial_state.get("video_url"):
         # Tier-2 on Vertex returns inline bytes with no URI, and
         # server-side clipping needs a URI. Silently grading the full
         # round recording would grade every startup in the round, not
@@ -654,11 +655,15 @@ def process_row(
         )
         if config.program_config.criterion_column_names:
             return row_id, {
-                "criterion_scores": {}, "total_score": None,
-                "notes": note, "human_review_flag": True,
+                "criterion_scores": {},
+                "total_score": None,
+                "notes": note,
+                "human_review_flag": True,
             }
         return row_id, {
-            "score": None, "reasoning": note, "human_review_flag": True,
+            "score": None,
+            "reasoning": note,
+            "human_review_flag": True,
         }
 
     if segment_bounds and initial_state.get("video_url"):
@@ -779,9 +784,7 @@ def process_row(
                 # instead of 0 for the more likely of the two paths (the
                 # grader runs first and can exit as early as attempt 1).
                 criterion_scores = {c: 0 for c in config.program_config.rubric_criteria}
-                criterion_rationale = {
-                    c: reasoning for c in config.program_config.rubric_criteria
-                }
+                criterion_rationale = {c: reasoning for c in config.program_config.rubric_criteria}
                 parsed = {
                     "criterion_scores": criterion_scores,
                     "criterion_rationale": criterion_rationale,
@@ -858,7 +861,9 @@ def run_batch(
     checkpoint = Checkpoint(config.checkpoint_path)
     workflow = _build_workflow(config)
 
-    header, rows = read_sheet_rows(sheets_service, config.sheet_id, config.sheet_range, config.header_row)
+    header, rows = read_sheet_rows(
+        sheets_service, config.sheet_id, config.sheet_range, config.header_row
+    )
     sheet_name = config.sheet_range.split("!")[0]
 
     # "AI" / "AI Reasoning" are named on the merged TOP label row, not the
@@ -867,7 +872,9 @@ def run_batch(
     # When there is no separate label row (top_label_row=0, Fellowship V2),
     # output columns live on the header row itself.
     if config.top_label_row > 0:
-        top_label_header = fetch_sheet_row(sheets_service, config.sheet_id, sheet_name, config.top_label_row)
+        top_label_header = fetch_sheet_row(
+            sheets_service, config.sheet_id, sheet_name, config.top_label_row
+        )
     else:
         top_label_header = header
     if config.program_config.criterion_column_names:
@@ -913,7 +920,11 @@ def run_batch(
             if limit is not None and submitted >= limit:
                 break
             row_id_preview = _derive_row_id(
-                header, row, sheet_row_number, duplicate_emails, program_config=config.program_config,
+                header,
+                row,
+                sheet_row_number,
+                duplicate_emails,
+                program_config=config.program_config,
             )
             effective_force = force or target_row_number is not None
             if checkpoint.is_done(row_id_preview) and not effective_force:
@@ -957,24 +968,42 @@ def run_batch(
                     if config.program_config.criterion_column_names:
                         if result["criterion_scores"]:
                             write_multi_row_result(
-                                sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                                col_map, result["criterion_scores"], result["total_score"],
+                                sheets_service,
+                                config.sheet_id,
+                                sheet_name,
+                                sheet_row_number,
+                                col_map,
+                                result["criterion_scores"],
+                                result["total_score"],
                                 result["notes"],
                             )
                         else:
                             write_multi_notes_only(
-                                sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                                col_map, result["notes"],
+                                sheets_service,
+                                config.sheet_id,
+                                sheet_name,
+                                sheet_row_number,
+                                col_map,
+                                result["notes"],
                             )
                     elif result["score"] is not None:
                         write_row_result(
-                            sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                            col_map, result["score"], result["reasoning"],
+                            sheets_service,
+                            config.sheet_id,
+                            sheet_name,
+                            sheet_row_number,
+                            col_map,
+                            result["score"],
+                            result["reasoning"],
                         )
                     else:
                         write_reasoning_only(
-                            sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                            col_map, result["reasoning"],
+                            sheets_service,
+                            config.sheet_id,
+                            sheet_name,
+                            sheet_row_number,
+                            col_map,
+                            result["reasoning"],
                         )
                     # Failed writes remain retryable rather than becoming lost grades.
                     checkpoint.mark_done(
@@ -1020,19 +1049,29 @@ def run_batch(
                     )
                     if config.program_config.criterion_column_names:
                         write_multi_notes_only(
-                            sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                            col_map, reasoning,
+                            sheets_service,
+                            config.sheet_id,
+                            sheet_name,
+                            sheet_row_number,
+                            col_map,
+                            reasoning,
                         )
                     else:
                         write_reasoning_only(
-                            sheets_service, config.sheet_id, sheet_name, sheet_row_number,
-                            col_map, reasoning,
+                            sheets_service,
+                            config.sheet_id,
+                            sheet_name,
+                            sheet_row_number,
+                            col_map,
+                            reasoning,
                         )
                     checkpoint.mark_done(row_id, True)
             done_count += 1
             if on_progress is not None:
                 on_progress(
-                    done_count, submitted, row_id,
+                    done_count,
+                    submitted,
+                    row_id,
                     None if skipped else ok,
                 )
 
@@ -1061,11 +1100,7 @@ def run_batch(
         # .done() before deciding a future still needs waiting on.
         pending = set(futures)
         while pending:
-            if (
-                not pool_shutdown_for_cancel
-                and cancel_event is not None
-                and cancel_event.is_set()
-            ):
+            if not pool_shutdown_for_cancel and cancel_event is not None and cancel_event.is_set():
                 # Kill signal observed: drop every future that hasn't
                 # started yet instead of still launching it. Futures
                 # already running keep going briefly — they're cancelled
@@ -1082,7 +1117,9 @@ def run_batch(
             # as soon as anything finishes, the timeout only bounds the
             # "nothing has happened yet" case.
             done_now, not_done_now = wait(
-                pending, timeout=CANCEL_CHECK_INTERVAL_SECONDS, return_when=FIRST_COMPLETED,
+                pending,
+                timeout=CANCEL_CHECK_INTERVAL_SECONDS,
+                return_when=FIRST_COMPLETED,
             )
             # wait()'s own bookkeeping mislabels cancelled-while-queued
             # futures as "not done" (see the long comment above) — recheck

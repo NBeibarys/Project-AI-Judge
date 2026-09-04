@@ -43,6 +43,7 @@ Requires the ffmpeg and ffprobe binaries on PATH (transcode to MP4,
 duration probing, size-targeted recompression); they are invoked as
 subprocesses and are not Python dependencies.
 """
+
 import io
 import json
 import os
@@ -178,11 +179,18 @@ def _transcode_to_mp4(data: bytes) -> bytes:
     """
     proc = subprocess.run(
         [
-            "ffmpeg", "-y",
-            "-i", "pipe:0",
-            "-c:v", "libx264", "-c:a", "aac",
-            "-movflags", "frag_keyframe+empty_moov",  # streamable to a pipe; no seekable-file requirement
-            "-f", "mp4",
+            "ffmpeg",
+            "-y",
+            "-i",
+            "pipe:0",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "frag_keyframe+empty_moov",  # streamable to a pipe; no seekable-file requirement
+            "-f",
+            "mp4",
             "pipe:1",
         ],
         input=data,
@@ -191,8 +199,7 @@ def _transcode_to_mp4(data: bytes) -> bytes:
     )
     if proc.returncode != 0 or not proc.stdout:
         raise VideoResolutionError(
-            "Video transcode to MP4 failed: "
-            + proc.stderr[-500:].decode("utf-8", errors="replace")
+            "Video transcode to MP4 failed: " + proc.stderr[-500:].decode("utf-8", errors="replace")
         )
     return proc.stdout
 
@@ -214,16 +221,25 @@ def _shrink_video_to_fit(data: bytes, max_bytes: int) -> bytes:
     """
     probe = subprocess.run(
         [
-            "ffprobe", "-v", "error",
-            "-print_format", "json", "-show_format", "-show_streams",
+            "ffprobe",
+            "-v",
+            "error",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
             # A fragmented MP4 (empty_moov — this function's own output,
             # when called a second time on an already-shrunk video) has no
             # duration in its top-level format box; ffprobe needs to scan
             # further into the stream to compute it. Without these, the
             # format-level probe below silently returns no "duration" key
             # at all rather than erroring, which reads as "unprobable".
-            "-analyzeduration", "100M", "-probesize", "100M",
-            "-i", "pipe:0",
+            "-analyzeduration",
+            "100M",
+            "-probesize",
+            "100M",
+            "-i",
+            "pipe:0",
         ],
         input=data,
         capture_output=True,
@@ -231,8 +247,7 @@ def _shrink_video_to_fit(data: bytes, max_bytes: int) -> bytes:
     )
     if probe.returncode != 0:
         raise VideoResolutionError(
-            "Video duration probe failed: "
-            + probe.stderr[-300:].decode("utf-8", errors="replace")
+            "Video duration probe failed: " + probe.stderr[-300:].decode("utf-8", errors="replace")
         )
     try:
         probe_json = json.loads(probe.stdout)
@@ -242,7 +257,8 @@ def _shrink_video_to_fit(data: bytes, max_bytes: int) -> bytes:
             # duration can be absent (fragmented containers) even though
             # per-stream duration is present.
             stream_durations = [
-                float(s["duration"]) for s in probe_json.get("streams", [])
+                float(s["duration"])
+                for s in probe_json.get("streams", [])
                 if s.get("duration") is not None
             ]
             if not stream_durations:
@@ -279,21 +295,33 @@ def _shrink_video_to_fit(data: bytes, max_bytes: int) -> bytes:
     try:
         proc = subprocess.run(
             [
-                "ffmpeg", "-y",
-                "-i", src_path,
-                "-c:v", "libx264",
+                "ffmpeg",
+                "-y",
+                "-i",
+                src_path,
+                "-c:v",
+                "libx264",
                 # veryfast: ~3-5x faster than the default medium preset.
                 # At the low bitrates this budget-driven shrink targets,
                 # preset quality differences are marginal — the bitrate cap
                 # dominates quality — but encode TIME is what times out on
                 # large sources.
-                "-preset", "veryfast",
-                "-b:v", str(video_bps),
-                "-maxrate", str(int(video_bps * 1.5)),
-                "-bufsize", str(int(video_bps * 2)),
-                "-c:a", "aac", "-b:a", str(VIDEO_SHRINK_AUDIO_BITRATE_BPS),
-                "-movflags", "frag_keyframe+empty_moov",
-                "-f", "mp4",
+                "-preset",
+                "veryfast",
+                "-b:v",
+                str(video_bps),
+                "-maxrate",
+                str(int(video_bps * 1.5)),
+                "-bufsize",
+                str(int(video_bps * 2)),
+                "-c:a",
+                "aac",
+                "-b:a",
+                str(VIDEO_SHRINK_AUDIO_BITRATE_BPS),
+                "-movflags",
+                "frag_keyframe+empty_moov",
+                "-f",
+                "mp4",
                 "pipe:1",
             ],
             capture_output=True,
@@ -303,8 +331,7 @@ def _shrink_video_to_fit(data: bytes, max_bytes: int) -> bytes:
         os.unlink(src_path)
     if proc.returncode != 0 or not proc.stdout:
         raise VideoResolutionError(
-            "Video compress failed: "
-            + proc.stderr[-500:].decode("utf-8", errors="replace")
+            "Video compress failed: " + proc.stderr[-500:].decode("utf-8", errors="replace")
         )
     return proc.stdout
 
@@ -361,9 +388,7 @@ def _download_https(url: str) -> bytes:
                 break
             written += len(chunk)
             if written > FILES_API_MAX_BYTES:
-                raise VideoResolutionError(
-                    "Video exceeds the 2GB Gemini Files API ceiling."
-                )
+                raise VideoResolutionError("Video exceeds the 2GB Gemini Files API ceiling.")
             chunks.append(chunk)
     return b"".join(chunks)
 
@@ -393,9 +418,7 @@ def _upload_or_wrap(
             config={"mime_type": mime_type} if mime_type else None,
         )
     except Exception as exc:
-        raise VideoResolutionError(
-            f"Gemini Files API upload failed: {type(exc).__name__}"
-        ) from exc
+        raise VideoResolutionError(f"Gemini Files API upload failed: {type(exc).__name__}") from exc
 
     deadline = time.time() + FILES_API_POLL_TIMEOUT_SECONDS
     while time.time() < deadline:
@@ -406,9 +429,7 @@ def _upload_or_wrap(
         if "ACTIVE" in state:
             uri = getattr(info, "uri", None)
             if not uri:
-                raise VideoResolutionError(
-                    "Files API returned ACTIVE file with no uri."
-                )
+                raise VideoResolutionError("Files API returned ACTIVE file with no uri.")
             return uri, None
         if "FAILED" in state:
             raise VideoResolutionError("Gemini Files API processing failed.")
@@ -448,7 +469,9 @@ def _https_pdf_head_metadata(url: str) -> tuple[str | None, int | None]:
     req = Request(url, headers=headers, method="HEAD")
     try:
         with opener.open(req, timeout=15) as response:
-            content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            content_type = (
+                (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            )
             length = response.headers.get("Content-Length")
             return (content_type or None), (int(length) if length is not None else None)
     except Exception:
@@ -483,7 +506,10 @@ def _finalize_downloaded_video(data: bytes, mime_type: str, source: str) -> Reso
         data = _shrink_video_to_fit(data, VERTEX_INLINE_VIDEO_MAX_BYTES)
     uri, inline_data = _upload_or_wrap(data, mime_type=mime_type)
     return ResolvedMedia(
-        uri=uri or "", mime_type=mime_type, source=source, data=inline_data,
+        uri=uri or "",
+        mime_type=mime_type,
+        source=source,
+        data=inline_data,
         original_size_bytes=original_size_bytes,
     )
 
@@ -549,9 +575,7 @@ def ingest_video(
             mime_type = _drive_video_mime_type(service, drive_id)
             data = _download_drive_file(service, drive_id)
             if len(data) > FILES_API_MAX_BYTES:
-                raise VideoResolutionError(
-                    "Drive video exceeds the 2GB size limit."
-                )
+                raise VideoResolutionError("Drive video exceeds the 2GB size limit.")
             return _finalize_downloaded_video(data, mime_type, source="drive_upload")
         except VideoResolutionError:
             raise
@@ -565,9 +589,7 @@ def ingest_video(
     # but-unresolvable video link to human review rather than downloading
     # whatever the URL actually points to (e.g. a webpage) and disguising
     # it as video data.
-    raise VideoResolutionError(
-        "Video could not be resolved to a downloadable source."
-    )
+    raise VideoResolutionError("Video could not be resolved to a downloadable source.")
 
 
 # ---------------------------------------------------------------------------
@@ -590,18 +612,14 @@ def _is_google_slides_url(url: str) -> bool:
     host we do not control.
     """
     parsed = urlparse(url.lower())
-    return parsed.hostname == "docs.google.com" and parsed.path.startswith(
-        "/presentation/d/"
-    )
+    return parsed.hostname == "docs.google.com" and parsed.path.startswith("/presentation/d/")
 
 
 def _slides_export_url(url: str) -> str:
     """Convert a Google Slides URL to its PDF export endpoint."""
     match = re.search(r"/presentation/d/([a-zA-Z0-9_-]+)", url)
     if not match:
-        raise VideoResolutionError(
-            "Could not extract presentation ID from Google Slides URL."
-        )
+        raise VideoResolutionError("Could not extract presentation ID from Google Slides URL.")
     pres_id = match.group(1)
     return f"https://docs.google.com/presentation/d/{pres_id}/export/pdf"
 
@@ -854,9 +872,7 @@ def ingest_pitch_deck(
                 data = _download_https(submitted_url)
 
         if len(data) > FILES_API_MAX_BYTES:
-            raise VideoResolutionError(
-                "Pitch deck exceeds the 2GB size limit."
-            )
+            raise VideoResolutionError("Pitch deck exceeds the 2GB size limit.")
 
         if not _looks_like_pdf(data):
             raise VideoResolutionError(

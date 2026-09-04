@@ -37,4 +37,3 @@ def parse_timestamp(text: str) -> int:
     if seconds > 59 or (len(numbers) == 3 and minutes > 59):
         raise SegmentValidationError(f"Out-of-range minutes/seconds: {text!r}")
     return hours * 3600 + minutes * 60 + seconds
-

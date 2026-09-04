@@ -21,6 +21,7 @@ bounded field, and GraderVerdict's ``model_validator`` enforces the
 verdict contract, so extra-field rejection at the schema level is not
 required.
 """
+
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -65,8 +66,10 @@ RUBRIC_CRITERIA_ALCHEMIST = (
     "Team Strength",
 )
 
+
 class CriterionEvidence(BaseModel):
     """Grounded evidence and the qualification needed to interpret it."""
+
     evidence: str = Field(min_length=1)
     notes: str = Field(min_length=1)
     # Cross-source consistency tag (emitted by the Alchemist and
@@ -86,6 +89,7 @@ class FellowshipV2AnalystReport(BaseModel):
     what keys to fill. A generic dict[str, CriterionEvidence] does not
     convey the required keys to the model.
     """
+
     # Written FIRST (field order drives generation order in structured
     # output) — same pattern as R2BAnalystReport.video_notes. Fellowship V2
     # has both a video AND application text (problem description, results,
@@ -125,6 +129,7 @@ class FellowshipV2AnalystReport(BaseModel):
 
 class R2BAnalystReport(BaseModel):
     """Explicit analyst schema for the R2B rubric with concrete field names."""
+
     # Written FIRST (field order drives generation order in structured
     # output) — same pattern as AlchemistAnalystReport.key_facts_cross_check.
     # R2B has no deck/text to draw on, so there's nothing to cross-check
@@ -160,6 +165,7 @@ class R2BAnalystReport(BaseModel):
 # R2B contracts: verify and score split across two agents.
 # ---------------------------------------------------------------------------
 
+
 class GraderVerdict(BaseModel):
     """The R2B grader VERIFIES ONLY — it does not score.
 
@@ -167,6 +173,7 @@ class GraderVerdict(BaseModel):
     6 criteria (with video evidence for criterion 6). approve=false carries
     actionable feedback for the analyst to revise.
     """
+
     approved: bool
     feedback: str = ""
     # Set true only when the grader has personally confirmed — by checking
@@ -192,13 +199,9 @@ class GraderVerdict(BaseModel):
         # prompt-level rule, not something this contract can check.
         if self.disqualifying_issue_found:
             if self.approved:
-                raise ValueError(
-                    "disqualifying_issue_found requires approved=false"
-                )
+                raise ValueError("disqualifying_issue_found requires approved=false")
             if not self.disqualifying_issue_reason.strip():
-                raise ValueError(
-                    "disqualifying_issue_found requires disqualifying_issue_reason"
-                )
+                raise ValueError("disqualifying_issue_found requires disqualifying_issue_reason")
         return self
 
 
@@ -218,6 +221,7 @@ class FellowshipV2HeadScore(BaseModel):
     rationales after, which silently contradicted its own
     "rationale-before-score" claim in FELLOWSHIP_V2_HEAD_INSTRUCTION.
     """
+
     # Field name -> rubric criterion name. Consumed by workflow.py's
     # _convert_named_head to flatten this schema's output into the
     # criterion_scores/criterion_rationale dicts the averaging code uses.
@@ -258,9 +262,7 @@ class FellowshipV2HeadScore(BaseModel):
     contradiction_found: bool = False
     contradiction_reason: str = ""
     disqualifying_issue_found: bool = False
-    disqualifying_issue_type: Literal[
-        "none", "fraud", "suspicious_application"
-    ] = "none"
+    disqualifying_issue_type: Literal["none", "fraud", "suspicious_application"] = "none"
     disqualifying_issue_reason: str = ""
 
 
@@ -272,6 +274,7 @@ class AlchemistAnalystReport(BaseModel):
     generic dict[str, CriterionEvidence] does not convey the required
     keys to the model.
     """
+
     # Written FIRST, before key_facts_cross_check (field order drives
     # generation order in structured output) — mirrors R2BAnalystReport's
     # video_notes pattern: a full read-through of the sources in the order
@@ -341,6 +344,7 @@ class AlchemistHeadScore(BaseModel):
     schema listed all 4 scores first and all 4 rationales after, which
     silently contradicted its own "rationale-before-score" claim above.
     """
+
     # See FellowshipV2HeadScore.CRITERION_FIELDS.
     CRITERION_FIELDS: ClassVar[dict[str, str]] = {
         "Product_MVP_Innovation": "Product/MVP & Innovation",
@@ -371,6 +375,7 @@ class AlchemistHeadScore(BaseModel):
 
 class R2BHeadScore(BaseModel):
     """Explicit head-scoring schema for the R2B rubric with concrete field names."""
+
     # See FellowshipV2HeadScore.CRITERION_FIELDS.
     CRITERION_FIELDS: ClassVar[dict[str, str]] = {
         "Problem_Solution": "Problem & Solution",

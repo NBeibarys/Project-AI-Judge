@@ -13,7 +13,8 @@ class AverageHeadSamplesTests(unittest.TestCase):
         # leaves every averaged criterion empty; that must escalate the row,
         # not raise ZeroDivisionError inside a worker thread.
         program_config = dataclasses.replace(
-            get_program_config("r2b"), rubric_criteria=("A",),
+            get_program_config("r2b"),
+            rubric_criteria=("A",),
         )
         workflow = AdkReviewWorkflow(
             analyzer_model="gemini-dummy-analyzer",

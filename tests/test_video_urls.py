@@ -12,17 +12,13 @@ from src.video_urls import (
 class YouTubeUrlTests(unittest.TestCase):
     def test_canonicalizes_dangling_timestamp_query(self) -> None:
         self.assertEqual(
-            canonicalize_youtube_url(
-                "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t"
-            ),
+            canonicalize_youtube_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t"),
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         )
 
     def test_canonicalizes_timestamped_short_url(self) -> None:
         self.assertEqual(
-            canonicalize_youtube_url(
-                "https://youtu.be/dQw4w9WgXcQ?si=share-token&t=2061"
-            ),
+            canonicalize_youtube_url("https://youtu.be/dQw4w9WgXcQ?si=share-token&t=2061"),
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         )
 
@@ -49,14 +45,10 @@ class YouTubeUrlTests(unittest.TestCase):
 
 class PublicHostTests(unittest.TestCase):
     @patch("socket.getaddrinfo")
-    def test_rejects_nat64_mapped_loopback(
-        self, mock_getaddrinfo: MagicMock
-    ) -> None:
+    def test_rejects_nat64_mapped_loopback(self, mock_getaddrinfo: MagicMock) -> None:
         # ipaddress calls 64:ff9b::7f00:1 global, but on a NAT64 network it
         # is 127.0.0.1; the explicit prefix deny is what stops it.
-        mock_getaddrinfo.return_value = [
-            (10, 1, 6, "", ("64:ff9b::7f00:1", 443, 0, 0))
-        ]
+        mock_getaddrinfo.return_value = [(10, 1, 6, "", ("64:ff9b::7f00:1", 443, 0, 0))]
 
         with self.assertRaises(VideoResolutionError):
             _public_https_host("https://nat64.example.com/video.mp4")

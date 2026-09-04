@@ -3,6 +3,7 @@ the asyncio-level cancel path (src/adk_agents/workflow.py).
 
 See docs/superpowers/specs/2026-07-21-kill-in-flight-grading-design.md.
 """
+
 import threading
 import time
 import unittest
@@ -50,11 +51,13 @@ class ProcessRowCancellationTests(unittest.TestCase):
         # given all-mock inputs, but must NOT raise RowCancelled).
         try:
             process_row(
-                MagicMock(program_config=MagicMock(
-                    requires_pitch_deck=False,
-                    source_priority="video_primary",
-                    criterion_column_names=None,
-                )),
+                MagicMock(
+                    program_config=MagicMock(
+                        requires_pitch_deck=False,
+                        source_priority="video_primary",
+                        criterion_column_names=None,
+                    )
+                ),
                 MagicMock(),
                 header=["Startup Name"],
                 row=["Acme"],
@@ -107,9 +110,7 @@ class CancelAllActiveTests(unittest.TestCase):
         # registry; cancelling it raises RuntimeError, which must not stop
         # the sweep from reaching the rows that are still running.
         closed_loop, closed_task = MagicMock(), MagicMock()
-        closed_loop.call_soon_threadsafe.side_effect = RuntimeError(
-            "Event loop is closed"
-        )
+        closed_loop.call_soon_threadsafe.side_effect = RuntimeError("Event loop is closed")
         live_loop, live_task = MagicMock(), MagicMock()
         with workflow_module._active_lock:
             workflow_module._active_tasks["row_closed"] = (closed_loop, closed_task)
@@ -165,8 +166,15 @@ class RunBatchCancelWhileQueuedTests(unittest.TestCase):
         config.program_config.reasoning_column_name = "Reasoning"
 
         def fake_process_row(
-            config, workflow, header, row, sheet_row_number, checkpoint,
-            force=False, duplicate_emails=None, cancel_event=None,
+            config,
+            workflow,
+            header,
+            row,
+            sheet_row_number,
+            checkpoint,
+            force=False,
+            duplicate_emails=None,
+            cancel_event=None,
         ):
             # Simulates a slow (e.g. Gemini API) row that does NOT itself
             # check cancel_event — the point of this test is the executor
@@ -188,14 +196,16 @@ class RunBatchCancelWhileQueuedTests(unittest.TestCase):
         cancel_event = threading.Event()
         outcome = {}
 
-        with patch("src.pipeline.get_sheets_service", return_value=MagicMock()), \
-             patch("src.pipeline.read_sheet_rows", return_value=(header, rows)), \
-             patch("src.pipeline.Checkpoint", return_value=checkpoint_instance), \
-             patch("src.pipeline._build_workflow", return_value=MagicMock()), \
-             patch("src.pipeline.resolve_output_columns", return_value={}), \
-             patch("src.pipeline.write_row_result", return_value=None), \
-             patch("src.pipeline.process_row", side_effect=fake_process_row), \
-             patch("src.pipeline.CANCEL_CHECK_INTERVAL_SECONDS", 0.02):
+        with (
+            patch("src.pipeline.get_sheets_service", return_value=MagicMock()),
+            patch("src.pipeline.read_sheet_rows", return_value=(header, rows)),
+            patch("src.pipeline.Checkpoint", return_value=checkpoint_instance),
+            patch("src.pipeline._build_workflow", return_value=MagicMock()),
+            patch("src.pipeline.resolve_output_columns", return_value={}),
+            patch("src.pipeline.write_row_result", return_value=None),
+            patch("src.pipeline.process_row", side_effect=fake_process_row),
+            patch("src.pipeline.CANCEL_CHECK_INTERVAL_SECONDS", 0.02),
+        ):
             # A short poll interval here (vs. the real 0.5s default) makes
             # this test deterministic: the completion loop re-checks
             # cancel_event roughly every 0.02s, so shutdown(cancel_futures=
@@ -207,7 +217,9 @@ class RunBatchCancelWhileQueuedTests(unittest.TestCase):
 
             def run():
                 try:
-                    outcome["result"] = run_batch(config, on_progress=on_progress, cancel_event=cancel_event)
+                    outcome["result"] = run_batch(
+                        config, on_progress=on_progress, cancel_event=cancel_event
+                    )
                 except Exception as exc:  # noqa: BLE001 — surfaced via assertion below
                     outcome["exception"] = exc
 

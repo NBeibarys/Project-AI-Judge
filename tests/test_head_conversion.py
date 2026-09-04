@@ -36,9 +36,7 @@ class ConvertNamedHeadTests(unittest.TestCase):
 
                 self.assertEqual(set(result["criterion_scores"]), set(criteria))
                 for field, criterion in schema.CRITERION_FIELDS.items():
-                    self.assertEqual(
-                        result["criterion_scores"][criterion], flat[field]
-                    )
+                    self.assertEqual(result["criterion_scores"][criterion], flat[field])
                     self.assertEqual(
                         result["criterion_rationale"][criterion],
                         flat[f"{field}_rationale"],

@@ -17,6 +17,7 @@ The Head is NOT part of the LoopAgent — it runs after the loop, on the
 approved evidence, so multi-sample averaging only re-runs the Head (cheap),
 not the whole analyst->grader loop (expensive).
 """
+
 import json
 import os
 import re
@@ -108,6 +109,7 @@ def _as_dict(value) -> dict:
 # Gate: verify-only grader, no scoring here. The Head scores after.
 # ---------------------------------------------------------------------------
 
+
 def gate_decision(verdict: dict, attempt: int, max_iterations: int) -> tuple[bool, bool]:
     """Return (approved, exhausted) for the analyst->grader verify-loop routing.
 
@@ -155,16 +157,13 @@ class ApprovalGate(BaseAgent):
     # exists to prevent, so the caller must state the program's cap.
     max_iterations: int
 
-    async def _run_async_impl(
-        self, ctx: InvocationContext
-    ) -> AsyncGenerator[Event, None]:
+    async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         state = ctx.session.state
         attempt = int(state.get("attempt", 1))
         verdict = _as_dict(state.get("grader_verdict", {}))
         approved, exhausted = gate_decision(verdict, attempt, self.max_iterations)
         disqualified = (
-            bool(verdict.get("disqualifying_issue_found"))
-            and self.contradiction_auto_zero
+            bool(verdict.get("disqualifying_issue_found")) and self.contradiction_auto_zero
         )
         if verdict.get("disqualifying_issue_found") and not self.contradiction_auto_zero:
             # Keep the observation, drop the verdict: make sure the issue
@@ -201,10 +200,7 @@ class ApprovalGate(BaseAgent):
             delta["evidence_approved"] = False
             delta["final_result"] = {
                 "score": 0,
-                "reasoning": (
-                    f"Application scored 0: confirmed {issue_type} — "
-                    f"{issue_reason}"
-                ),
+                "reasoning": (f"Application scored 0: confirmed {issue_type} — {issue_reason}"),
                 "confidence": "high",
             }
             delta["human_review_flag"] = True
@@ -241,6 +237,7 @@ class ApprovalGate(BaseAgent):
 # ---------------------------------------------------------------------------
 # Agent builders.
 # ---------------------------------------------------------------------------
+
 
 def build_root_agent(
     analyzer_model: str,
@@ -289,9 +286,7 @@ def build_root_agent(
             # (same row, same seed, inconsistent outcomes). Every program
             # currently sets HIGH, but this is now a knob, not an assumption.
             thinking_config=types.ThinkingConfig(
-                thinking_level=getattr(
-                    types.ThinkingLevel, program_config.analyst_thinking_level
-                ),
+                thinking_level=getattr(types.ThinkingLevel, program_config.analyst_thinking_level),
             ),
             # media_resolution intentionally left unspecified: a live A/B
             # test (LOW/MEDIUM/HIGH on the same real R2B row) showed HIGH
@@ -347,9 +342,7 @@ def build_root_agent(
             # rather than hardcoded — every program currently sets HIGH, but
             # this is now a knob, not an assumption.
             thinking_config=types.ThinkingConfig(
-                thinking_level=getattr(
-                    types.ThinkingLevel, program_config.grader_thinking_level
-                ),
+                thinking_level=getattr(types.ThinkingLevel, program_config.grader_thinking_level),
             ),
             # media_resolution intentionally left unspecified — see the
             # analyst's config above for the A/B test that settled this.
@@ -435,9 +428,7 @@ def build_head_agent(
             # correct for a score-only role. Alchemist adopts the same LOW
             # setting but hasn't been separately live-tested this way yet.
             thinking_config=types.ThinkingConfig(
-                thinking_level=getattr(
-                    types.ThinkingLevel, program_config.head_thinking_level
-                ),
+                thinking_level=getattr(types.ThinkingLevel, program_config.head_thinking_level),
             ),
             # media_resolution intentionally left unspecified — see the
             # analyst's config above for the A/B test that settled this.
@@ -480,14 +471,14 @@ def build_head_agent(
 # before Config.from_env() ever gets a chance to give its clearer error.
 # Only `adk web`/`adk run` actually touch root_agent/app; the batch pipeline
 # never references them (it builds its own agents via config's real values).
-_default_program_config = get_program_config(
-    os.environ.get("PROGRAM", "fellowship_v2")
-)
+_default_program_config = get_program_config(os.environ.get("PROGRAM", "fellowship_v2"))
 _cli_analyzer_model = os.environ.get("ANALYZER_MODEL")
 _cli_grader_model = os.environ.get("GRADER_MODEL")
 if _cli_analyzer_model and _cli_grader_model:
     root_agent = build_root_agent(
-        _cli_analyzer_model, _cli_grader_model, _default_program_config,
+        _cli_analyzer_model,
+        _cli_grader_model,
+        _default_program_config,
     )
     app = App(name="adk_agents", root_agent=root_agent)
 else:

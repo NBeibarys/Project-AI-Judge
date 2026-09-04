@@ -10,6 +10,7 @@ only) in a loop, then a separate Head agent (score only, after approval). The
 Head is re-run N_SAMPLES times and its criterion scores are averaged, with
 the rationale selected from the run closest to the average (per spec).
 """
+
 from dataclasses import dataclass
 from typing import Literal
 
@@ -182,7 +183,10 @@ class ProgramConfig:
     # feeding the AI a human's already-given score would anchor its judgment
     # instead of producing an independent one.
     excluded_header_substrings: tuple = ()
-    excluded_header_names: frozenset = frozenset({'', 'AI', 'AI_Reasoning', 'AI Reasoning', 'Total'})
+    excluded_header_names: frozenset = frozenset(
+        {"", "AI", "AI_Reasoning", "AI Reasoning", "Total"}
+    )
+
 
 # --- Fellowship V2 (9 criteria, 5-band 1-10, new sheet) --------------------
 
@@ -288,14 +292,23 @@ R2B_CONFIG = ProgramConfig(
     # AI's own prior scores/notes back to it as if they were part of the
     # applicant's submission, directly undermining the "video is the ONLY
     # source" instructions this round's prompts rely on.
-    excluded_header_names=frozenset({
-        "", "AI", "AI_Reasoning",
-        "Problem & Solution (10 pts max)", "Market Potential (10 pts max)",
-        "Product/MVP & Innovation (10 pts max)", "Team Strength (10 pts max)",
-        "Business Model (10 pts max)", "Presentation & Clarity (10 pts)",
-        "Total Score", "Comments / Notes",
-        "Segment Start", "Segment End",
-    }),
+    excluded_header_names=frozenset(
+        {
+            "",
+            "AI",
+            "AI_Reasoning",
+            "Problem & Solution (10 pts max)",
+            "Market Potential (10 pts max)",
+            "Product/MVP & Innovation (10 pts max)",
+            "Team Strength (10 pts max)",
+            "Business Model (10 pts max)",
+            "Presentation & Clarity (10 pts)",
+            "Total Score",
+            "Comments / Notes",
+            "Segment Start",
+            "Segment End",
+        }
+    ),
 )
 
 
@@ -348,12 +361,18 @@ ALCHEMIST_CONFIG = ProgramConfig(
     default_header_row=1,
     default_top_label_row=0,
     excluded_header_substrings=(
-        "timestamp", "email", "phone", "telegram", "whatsapp",
-        "ceo", "visa", "delaware", "incorporated", "registered",
+        "timestamp",
+        "email",
+        "phone",
+        "telegram",
+        "whatsapp",
+        "ceo",
+        "visa",
+        "delaware",
+        "incorporated",
+        "registered",
     ),
-    excluded_header_names=frozenset(
-        {"", "AI", "AI_Reasoning", "AI Reasoning", "Total", "Score"}
-    ),
+    excluded_header_names=frozenset({"", "AI", "AI_Reasoning", "AI Reasoning", "Total", "Score"}),
 )
 
 
@@ -370,7 +389,5 @@ def get_program_config(name: str) -> ProgramConfig:
     rubric."""
     key = (name or "").strip().lower()
     if key not in _PROGRAMS:
-        raise ValueError(
-            f"Unknown program '{name}'. Known programs: {sorted(_PROGRAMS)}"
-        )
+        raise ValueError(f"Unknown program '{name}'. Known programs: {sorted(_PROGRAMS)}")
     return _PROGRAMS[key]

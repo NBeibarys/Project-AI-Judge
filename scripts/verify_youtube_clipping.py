@@ -7,6 +7,7 @@ Asks Gemini to describe ONLY the clipped span of the given YouTube video.
 PASS = the response clearly describes content from that span (operator
 judges by watching those minutes in the YouTube player).
 """
+
 import os
 import sys
 
@@ -29,19 +30,27 @@ def main() -> None:
     client = genai.Client()  # env-driven: GOOGLE_GENAI_USE_VERTEXAI etc.
     response = client.models.generate_content(
         model=os.environ["ANALYZER_MODEL"],
-        contents=[types.Content(role="user", parts=[
-            types.Part(
-                file_data=types.FileData(file_uri=url, mime_type="video/mp4"),
-                video_metadata=types.VideoMetadata(
-                    start_offset=f"{start_s}s", end_offset=f"{end_s}s",
-                ),
-            ),
-            types.Part(text=(
-                "Describe what happens in this video clip in 5 sentences: "
-                "who is speaking, what company/product is discussed, and "
-                "roughly what is said first and last."
-            )),
-        ])],
+        contents=[
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part(
+                        file_data=types.FileData(file_uri=url, mime_type="video/mp4"),
+                        video_metadata=types.VideoMetadata(
+                            start_offset=f"{start_s}s",
+                            end_offset=f"{end_s}s",
+                        ),
+                    ),
+                    types.Part(
+                        text=(
+                            "Describe what happens in this video clip in 5 sentences: "
+                            "who is speaking, what company/product is discussed, and "
+                            "roughly what is said first and last."
+                        )
+                    ),
+                ],
+            )
+        ],
         config=types.GenerateContentConfig(temperature=0.0),
     )
     print(response.text)

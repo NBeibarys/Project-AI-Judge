@@ -15,6 +15,7 @@ Gemini-only for now (no Claude credit on this account) — earlier
 multi-provider experiments are recorded in the private development
 archive, not this repository.
 """
+
 import dataclasses
 import hashlib
 import os
@@ -136,9 +137,7 @@ class Config:
                 new_total_score_column_name = (
                     total_score_column_override or program_config.total_score_column_name
                 )
-                new_notes_column_name = (
-                    notes_column_override or program_config.notes_column_name
-                )
+                new_notes_column_name = notes_column_override or program_config.notes_column_name
                 excluded_names = (
                     frozenset(ignored_columns_override or ())
                     | {""}
@@ -160,7 +159,11 @@ class Config:
                     excluded_header_names=excluded_names,
                     excluded_header_substrings=(),
                 )
-        elif score_column_override or reasoning_column_override or ignored_columns_override is not None:
+        elif (
+            score_column_override
+            or reasoning_column_override
+            or ignored_columns_override is not None
+        ):
             excluded_names = frozenset(ignored_columns_override or ()) | {""}
             if score_column_override:
                 excluded_names = excluded_names | {score_column_override}
@@ -190,7 +193,8 @@ class Config:
             # point — composes correctly whether or not one of the branches
             # above already produced a derived ProgramConfig.
             program_config = dataclasses.replace(
-                program_config, name_column_name=name_column_override,
+                program_config,
+                name_column_name=name_column_override,
             )
         sheet_id = sheet_id_override or os.environ.get(program_config.sheet_id_env, "")
         sa_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_PATH", "")
@@ -199,10 +203,13 @@ class Config:
             raise RuntimeError(f"{program_config.sheet_id_env} not set")
         if not sa_path or not os.path.isfile(sa_path):
             raise RuntimeError(f"GOOGLE_SERVICE_ACCOUNT_PATH invalid: {sa_path}")
-        use_vertex = os.environ.get(
-            "GOOGLE_GENAI_USE_VERTEXAI",
-            "FALSE",
-        ).upper() == "TRUE"
+        use_vertex = (
+            os.environ.get(
+                "GOOGLE_GENAI_USE_VERTEXAI",
+                "FALSE",
+            ).upper()
+            == "TRUE"
+        )
         if use_vertex:
             if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
                 raise RuntimeError("GOOGLE_CLOUD_PROJECT not set for Vertex AI")
@@ -229,13 +236,15 @@ class Config:
         head_model = _env("HEAD_MODEL", grader_model)
 
         sheet_range = sheet_range_override or _env(
-            program_config.sheet_range_env, DEFAULT_SHEET_RANGE,
+            program_config.sheet_range_env,
+            DEFAULT_SHEET_RANGE,
         )
         header_row = (
             header_row_override
             if header_row_override is not None
             else _env_int(
-                program_config.header_row_env, program_config.default_header_row,
+                program_config.header_row_env,
+                program_config.default_header_row,
             )
         )
 

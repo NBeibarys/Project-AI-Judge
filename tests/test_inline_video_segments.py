@@ -37,14 +37,22 @@ class InlineVideoSegmentTests(unittest.TestCase):
     ) -> None:
         mock_resolve.side_effect = VideoResolutionError("no direct video")
         mock_ingest.return_value = ResolvedMedia(
-            uri="", mime_type="video/mp4", source="drive_upload", data=b"x",
+            uri="",
+            mime_type="video/mp4",
+            source="drive_upload",
+            data=b"x",
         )
         checkpoint = MagicMock()
         checkpoint.is_done.return_value = False
         workflow = MagicMock()
 
         _row_id, result = process_row(
-            _r2b_config(), workflow, HEADER, ROW, 3, checkpoint,
+            _r2b_config(),
+            workflow,
+            HEADER,
+            ROW,
+            3,
+            checkpoint,
         )
 
         self.assertTrue(result["human_review_flag"])

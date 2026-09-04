@@ -22,6 +22,7 @@ If a Head run fails (API error, schema validation), it is excluded from the
 average. If ALL Head runs fail, the row escalates to human review. If the verify loop itself fails to reach approval within its iteration
 cap, the row escalates to human review without scoring.
 """
+
 import asyncio
 import json
 import os
@@ -173,9 +174,12 @@ class AdkReviewWorkflow:
             if video_data or video_url:
                 mime_type = state.get("video_mime_type") or "video/mp4"
                 if video_data:
-                    parts.append(types.Part.from_bytes(
-                        data=video_data, mime_type=mime_type,
-                    ))
+                    parts.append(
+                        types.Part.from_bytes(
+                            data=video_data,
+                            mime_type=mime_type,
+                        )
+                    )
                 else:
                     # Virtual clip: with segment offsets in state
                     # (operator-typed Segment Start/End cells), Gemini
@@ -189,25 +193,34 @@ class AdkReviewWorkflow:
                             start_offset=f"{state['video_segment_start_s']}s",
                             end_offset=f"{state['video_segment_end_s']}s",
                         )
-                    parts.append(types.Part(
-                        file_data=types.FileData(
-                            file_uri=video_url, mime_type=mime_type,
-                        ),
-                        **part_kwargs,
-                    ))
+                    parts.append(
+                        types.Part(
+                            file_data=types.FileData(
+                                file_uri=video_url,
+                                mime_type=mime_type,
+                            ),
+                            **part_kwargs,
+                        )
+                    )
             # Alchemist: pitch deck PDF as a multimodal Part (required source).
             deck_data = state.get("pitch_deck_data")
             deck_url = state.get("pitch_deck_url")
             if deck_data or deck_url:
                 deck_mime = state.get("pitch_deck_mime_type", "application/pdf")
                 if deck_data:
-                    parts.append(types.Part.from_bytes(
-                        data=deck_data, mime_type=deck_mime,
-                    ))
+                    parts.append(
+                        types.Part.from_bytes(
+                            data=deck_data,
+                            mime_type=deck_mime,
+                        )
+                    )
                 else:
-                    parts.append(types.Part.from_uri(
-                        file_uri=deck_url, mime_type=deck_mime,
-                    ))
+                    parts.append(
+                        types.Part.from_uri(
+                            file_uri=deck_url,
+                            mime_type=deck_mime,
+                        )
+                    )
         text = state.get("raw_row_text", "")
         # Pre-extracted text readout of image-only deck slides (charts,
         # financial tables — see video_ingestion.py's _read_chart_images).
@@ -289,7 +302,10 @@ class AdkReviewWorkflow:
         return dict(session.state)
 
     async def _run_head_once(
-        self, state: dict, approved_evidence: dict, sample_idx: int,
+        self,
+        state: dict,
+        approved_evidence: dict,
+        sample_idx: int,
     ) -> dict:
         """Run the Head scorer once on the approved evidence.
 
@@ -367,10 +383,7 @@ class AdkReviewWorkflow:
         if not valid:
             return {
                 "score": None,
-                "reasoning": (
-                    "All Head samples failed to produce scores. "
-                    "Manual review required."
-                ),
+                "reasoning": ("All Head samples failed to produce scores. Manual review required."),
                 "confidence": "n/a",
                 "human_review_flag": True,
             }
@@ -388,18 +401,24 @@ class AdkReviewWorkflow:
         disqualified_samples = [s for s in valid if s.get("disqualifying_issue_found")]
         # Deduplicated: at temp=0 all N samples typically flag the SAME
         # issue verbatim, and the old plain join wrote it 3x into the sheet.
-        flag_reasons = list(dict.fromkeys(
-            r for r in (
-                [s.get("contradiction_reason", "").strip() for s in contradiction_samples]
-                + [
-                    f"{s.get('disqualifying_issue_type', 'issue')}: "
-                    f"{s.get('disqualifying_issue_reason', '').strip()}"
-                    for s in disqualified_samples
-                    if s.get("disqualifying_issue_reason", "").strip()
-                ]
-            ) if r
-        ))
-        if (contradiction_samples or disqualified_samples) and self.program_config.contradiction_auto_zero:
+        flag_reasons = list(
+            dict.fromkeys(
+                r
+                for r in (
+                    [s.get("contradiction_reason", "").strip() for s in contradiction_samples]
+                    + [
+                        f"{s.get('disqualifying_issue_type', 'issue')}: "
+                        f"{s.get('disqualifying_issue_reason', '').strip()}"
+                        for s in disqualified_samples
+                        if s.get("disqualifying_issue_reason", "").strip()
+                    ]
+                )
+                if r
+            )
+        )
+        if (
+            contradiction_samples or disqualified_samples
+        ) and self.program_config.contradiction_auto_zero:
             all_reasons = "; ".join(flag_reasons)
             return {
                 "score": 0,
@@ -447,17 +466,13 @@ class AdkReviewWorkflow:
                 "human_review_flag": True,
             }
 
-        avg_final = round(
-            sum(avg_criterion_scores.values()) / len(avg_criterion_scores)
-        )
+        avg_final = round(sum(avg_criterion_scores.values()) / len(avg_criterion_scores))
 
         # Closest-rationale selection: pick the run whose final_score is
         # closest to the averaged final score. Use that run's rationale.
         closest = min(
             valid,
-            key=lambda s: abs(
-                s.get("final_score", avg_final) - avg_final
-            ),
+            key=lambda s: abs(s.get("final_score", avg_final) - avg_final),
         )
         selected_rationale = closest.get("criterion_rationale", {})
 
@@ -497,14 +512,15 @@ class AdkReviewWorkflow:
 
         # If the verify loop exhausted without approval, it already set
         # final_result + human_review_flag. Return as-is.
-        if verify_state.get("human_review_flag") or not verify_state.get(
-            "evidence_approved"
-        ):
-            final_result = verify_state.get("final_result", {
-                "score": None,
-                "reasoning": "Evidence was not approved by the grader.",
-                "confidence": "n/a",
-            })
+        if verify_state.get("human_review_flag") or not verify_state.get("evidence_approved"):
+            final_result = verify_state.get(
+                "final_result",
+                {
+                    "score": None,
+                    "reasoning": "Evidence was not approved by the grader.",
+                    "confidence": "n/a",
+                },
+            )
             return {
                 "final_result": final_result,
                 "human_review_flag": True,
@@ -559,9 +575,7 @@ class AdkReviewWorkflow:
             for i in range(self.n_samples):
                 samples.append(await _run_sample(i))
         else:
-            samples = list(await asyncio.gather(
-                *(_run_sample(i) for i in range(self.n_samples))
-            ))
+            samples = list(await asyncio.gather(*(_run_sample(i) for i in range(self.n_samples))))
 
         # Step 3: average + closest-rationale selection.
         averaged = self._average_head_samples(samples)
@@ -608,12 +622,9 @@ def _convert_named_head(flat: dict, criterion_fields: dict[str, str]) -> dict:
     excluded from the average) instead of silently substituting a
     mid-scale score, which the previous .get(field, 5) defaults could do.
     """
-    criterion_scores = {
-        criterion: flat[field] for field, criterion in criterion_fields.items()
-    }
+    criterion_scores = {criterion: flat[field] for field, criterion in criterion_fields.items()}
     criterion_rationale = {
-        criterion: flat[f"{field}_rationale"]
-        for field, criterion in criterion_fields.items()
+        criterion: flat[f"{field}_rationale"] for field, criterion in criterion_fields.items()
     }
     return {
         "criterion_scores": criterion_scores,

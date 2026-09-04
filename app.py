@@ -12,6 +12,7 @@ run, whether to re-grade already-graded rows, and checkpoint reset. The
 main area shows current sheet grading state and the results of the most
 recent run.
 """
+
 import json
 import os
 import sys
@@ -59,14 +60,21 @@ with st.sidebar:
     _program_config = get_program_config(program)
     _default_sheet_id = os.environ.get(_program_config.sheet_id_env, "")
     _default_sheet_range = os.environ.get(
-        _program_config.sheet_range_env, DEFAULT_SHEET_RANGE,
+        _program_config.sheet_range_env,
+        DEFAULT_SHEET_RANGE,
     )
-    _default_header_row = int(os.environ.get(
-        _program_config.header_row_env, str(_program_config.default_header_row),
-    ))
-    _default_top_label_row = int(os.environ.get(
-        _program_config.top_label_row_env, str(_program_config.default_top_label_row),
-    ))
+    _default_header_row = int(
+        os.environ.get(
+            _program_config.header_row_env,
+            str(_program_config.default_header_row),
+        )
+    )
+    _default_top_label_row = int(
+        os.environ.get(
+            _program_config.top_label_row_env,
+            str(_program_config.default_top_label_row),
+        )
+    )
 
     sheet_id_input = st.text_input(
         "Sheet ID",
@@ -77,16 +85,21 @@ with st.sidebar:
     sheet_range_input = st.text_input(
         "Sheet tab / range",
         value=_default_sheet_range,
-        help="Tab name (e.g. 'Grading Final'), or an A1 range starting "
-        "at row 1.",
+        help="Tab name (e.g. 'Grading Final'), or an A1 range starting at row 1.",
     )
     header_row_input = st.number_input(
         "Header row",
-        min_value=1, max_value=100, value=_default_header_row, step=1,
+        min_value=1,
+        max_value=100,
+        value=_default_header_row,
+        step=1,
     )
     top_label_row_input = st.number_input(
         "Top label row",
-        min_value=0, max_value=100, value=_default_top_label_row, step=1,
+        min_value=0,
+        max_value=100,
+        value=_default_top_label_row,
+        step=1,
         help="Row number of a merged group-header row ABOVE the real "
         "column headers (e.g. reviewer names spanning several sub-"
         "columns). Set to 0 if this sheet has no such row — output "
@@ -112,11 +125,11 @@ with st.sidebar:
     notes_column_override = None
     if sheet_id_input and sheet_range_input:
         try:
-            _preview_service = get_sheets_service(
-                os.environ.get("GOOGLE_SERVICE_ACCOUNT_PATH", "")
-            )
+            _preview_service = get_sheets_service(os.environ.get("GOOGLE_SERVICE_ACCOUNT_PATH", ""))
             _preview_header, _ = read_sheet_rows(
-                _preview_service, sheet_id_input, sheet_range_input,
+                _preview_service,
+                sheet_id_input,
+                sheet_range_input,
                 int(header_row_input),
             )
         except Exception:
@@ -143,7 +156,8 @@ with st.sidebar:
                         )
                     _criterion_selection = st.selectbox(
                         f"{_criterion} column",
-                        options=_preview_header, index=_default_idx,
+                        options=_preview_header,
+                        index=_default_idx,
                         placeholder="Select a column…",
                         help=f"Column this run writes the '{_criterion}' score to.",
                     )
@@ -168,14 +182,14 @@ with st.sidebar:
                         "found in this sheet — please select the correct Total Score column."
                     )
                 total_score_column_override = st.selectbox(
-                    "Total Score column", options=_preview_header, index=_default_total_idx,
+                    "Total Score column",
+                    options=_preview_header,
+                    index=_default_total_idx,
                     placeholder="Select a column…",
                     help="Column this run writes the total score to.",
                 )
                 if _program_config.notes_column_name in _preview_header:
-                    _default_notes_idx = _preview_header.index(
-                        _program_config.notes_column_name
-                    )
+                    _default_notes_idx = _preview_header.index(_program_config.notes_column_name)
                 else:
                     _default_notes_idx = None
                     st.warning(
@@ -183,7 +197,9 @@ with st.sidebar:
                         "in this sheet — please select the correct Notes / Comments column."
                     )
                 notes_column_override = st.selectbox(
-                    "Notes / Comments column", options=_preview_header, index=_default_notes_idx,
+                    "Notes / Comments column",
+                    options=_preview_header,
+                    index=_default_notes_idx,
                     placeholder="Select a column…",
                     help="Column this run writes the AI's reasoning/notes to.",
                 )
@@ -193,9 +209,7 @@ with st.sidebar:
                 ) - {None}
             else:
                 if _program_config.score_column_name in _preview_header:
-                    _default_score_idx = _preview_header.index(
-                        _program_config.score_column_name
-                    )
+                    _default_score_idx = _preview_header.index(_program_config.score_column_name)
                 else:
                     _default_score_idx = None
                     st.warning(
@@ -213,18 +227,20 @@ with st.sidebar:
                         "found in this sheet — please select the correct Reasoning column."
                     )
                 score_column_override = st.selectbox(
-                    "Score column", options=_preview_header, index=_default_score_idx,
+                    "Score column",
+                    options=_preview_header,
+                    index=_default_score_idx,
                     placeholder="Select a column…",
                     help="Column this run writes the numeric score to.",
                 )
                 reasoning_column_override = st.selectbox(
-                    "Reasoning column", options=_preview_header, index=_default_reasoning_idx,
+                    "Reasoning column",
+                    options=_preview_header,
+                    index=_default_reasoning_idx,
                     placeholder="Select a column…",
                     help="Column this run writes the AI's reasoning to.",
                 )
-                _mapped_output_columns = (
-                    {score_column_override, reasoning_column_override} - {None}
-                )
+                _mapped_output_columns = {score_column_override, reasoning_column_override} - {None}
 
             # Name column: which sheet column identifies the applicant/
             # startup by name — used by pipeline.py for no-show detection,
@@ -251,7 +267,8 @@ with st.sidebar:
                 )
             name_column_override = st.selectbox(
                 "Name column",
-                options=_preview_header, index=_default_name_idx,
+                options=_preview_header,
+                index=_default_name_idx,
                 placeholder="Select a column…",
                 help="Column identifying the applicant/startup by name — "
                 "used for no-show detection, R2B's wrong-segment tripwire "
@@ -266,14 +283,16 @@ with st.sidebar:
             # config.py, but harmless and keeps the multiselect honest
             # about what's actually hidden from the AI.
             _default_ignored = [
-                c for c in _preview_header
+                c
+                for c in _preview_header
                 if c in _program_config.excluded_header_names
                 or any(s in c.lower() for s in _program_config.excluded_header_substrings)
                 or c in _mapped_output_columns
             ]
             ignored_columns_override = st.multiselect(
                 "Columns to ignore (hidden from the AI)",
-                options=_preview_header, default=_default_ignored,
+                options=_preview_header,
+                default=_default_ignored,
             )
 
 st.title(f"{PROGRAM_LABELS[program]} Grading Agent")
@@ -316,7 +335,10 @@ with st.sidebar:
     )
     limit = st.number_input(
         "Max rows to process this run",
-        min_value=1, max_value=1000, value=10, step=1,
+        min_value=1,
+        max_value=1000,
+        value=10,
+        step=1,
     )
     run_clicked = st.button("Run grading", type="primary", use_container_width=True)
 
@@ -362,15 +384,18 @@ with st.sidebar:
     st.header("Test a single row")
     test_row_number = st.number_input(
         "Sheet row number",
-        min_value=1, max_value=100000,
-        value=config.header_row + 1, step=1,
+        min_value=1,
+        max_value=100000,
+        value=config.header_row + 1,
+        step=1,
         help="Grade exactly this row (numbered as it appears in the actual "
         "Google Sheet), bypassing the checkpoint — always re-runs even if "
         "already graded. Useful for testing a prompt/config change on one "
         "known row before running a full batch.",
     )
     test_row_clicked = st.button(
-        "Grade this row only", use_container_width=True,
+        "Grade this row only",
+        use_container_width=True,
     )
 
 if run_clicked or test_row_clicked:
@@ -435,13 +460,19 @@ if run_clicked or test_row_clicked:
         try:
             if test_row_clicked:
                 result = run_batch(
-                    config, force=True, limit=1, on_progress=_on_progress,
+                    config,
+                    force=True,
+                    limit=1,
+                    on_progress=_on_progress,
                     target_row_number=int(test_row_number),
                     cancel_event=cancel_event,
                 )
             else:
                 result = run_batch(
-                    config, force=force, limit=int(limit), on_progress=_on_progress,
+                    config,
+                    force=force,
+                    limit=int(limit),
+                    on_progress=_on_progress,
                     cancel_event=cancel_event,
                 )
             with shared_lock:
@@ -500,8 +531,7 @@ if run_clicked or test_row_clicked:
         progress_bar.empty()
         status_text.empty()
         st.warning(
-            f"⛔ API request killed — grading stopped ({ok_count} graded "
-            "before cancellation)."
+            f"⛔ API request killed — grading stopped ({ok_count} graded before cancellation)."
         )
         raise
 
@@ -621,7 +651,11 @@ for i, row in enumerate(rows):
     else:
         sheet_row_number = config.header_row + i + 1
         row_id = _derive_row_id(
-            header, row, sheet_row_number, duplicate_emails, program_config=config.program_config,
+            header,
+            row,
+            sheet_row_number,
+            duplicate_emails,
+            program_config=config.program_config,
         )
         row_key = Checkpoint.key_for(row_id)
         status = checkpoint_statuses.get(row_key)
@@ -631,11 +665,13 @@ for i, row in enumerate(rows):
             mistake_count += 1
         # else: no checkpoint entry yet — not attempted, not a mistake.
 
-    table_rows.append({
-        name_column_label: name,
-        "Score": score,
-        "Human review": human_review,
-    })
+    table_rows.append(
+        {
+            name_column_label: name,
+            "Score": score,
+            "Human review": human_review,
+        }
+    )
 
 df = pd.DataFrame(table_rows)
 total = len(df)
@@ -643,6 +679,8 @@ total = len(df)
 col1, col2, col3 = st.columns(3)
 col1.metric("Total rows", total)
 col2.metric("Graded", graded_count, help="Has a score, or a completed human-review outcome.")
-col3.metric("Mistakes", mistake_count, help="Genuine technical errors — will retry on the next run.")
+col3.metric(
+    "Mistakes", mistake_count, help="Genuine technical errors — will retry on the next run."
+)
 
 st.dataframe(df, use_container_width=True, height=500)

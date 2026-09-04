@@ -119,9 +119,7 @@ def _public_https_host(url: str) -> str:
     parsed = urlparse(url)
     host = (parsed.hostname or "").rstrip(".").lower()
     if parsed.scheme != "https" or not host or parsed.username or parsed.password:
-        raise VideoResolutionError(
-            "Media URLs must use public HTTPS without embedded credentials."
-        )
+        raise VideoResolutionError("Media URLs must use public HTTPS without embedded credentials.")
     try:
         addresses = {entry[4][0] for entry in socket.getaddrinfo(host, 443)}
     except socket.gaierror as exc:
@@ -223,7 +221,9 @@ def _request_metadata(url: str) -> ResourceMetadata:
             # Some otherwise valid media servers reject HEAD; GET still reads no video
             # bytes because the response is closed after headers unless it is HTML.
             if exc.code not in {403, 405, 501}:
-                raise VideoResolutionError(f"Video metadata request failed: HTTP {exc.code}.") from exc
+                raise VideoResolutionError(
+                    f"Video metadata request failed: HTTP {exc.code}."
+                ) from exc
             used_head = False
             response = opener.open(
                 Request(url, headers=headers, method="GET"),
@@ -245,9 +245,7 @@ def _request_metadata(url: str) -> ResourceMetadata:
     except VideoResolutionError:
         raise
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        raise VideoResolutionError(
-            f"Video metadata request failed: {type(exc).__name__}."
-        ) from exc
+        raise VideoResolutionError(f"Video metadata request failed: {type(exc).__name__}.") from exc
 
     with response:
         final_url = response.geturl()
@@ -281,11 +279,7 @@ class _VideoMetadataParser(HTMLParser):
         self._json_ld_chunks: list[str] = []
 
     def handle_starttag(self, tag, attrs):
-        values = {
-            key.lower(): value
-            for key, value in attrs
-            if key and value is not None
-        }
+        values = {key.lower(): value for key, value in attrs if key and value is not None}
         tag = tag.lower()
         if tag == "meta":
             name = (values.get("property") or values.get("name") or "").lower()
@@ -296,9 +290,7 @@ class _VideoMetadataParser(HTMLParser):
                 "og:video:secure_url",
                 "twitter:player:stream",
             }:
-                self.candidates.append(
-                    (urljoin(self.page_url, content), None, name)
-                )
+                self.candidates.append((urljoin(self.page_url, content), None, name))
         elif tag in {"video", "source"} and values.get("src"):
             self.candidates.append(
                 (
@@ -307,10 +299,7 @@ class _VideoMetadataParser(HTMLParser):
                     f"html:{tag}",
                 )
             )
-        elif (
-            tag == "script"
-            and values.get("type", "").lower() == "application/ld+json"
-        ):
+        elif tag == "script" and values.get("type", "").lower() == "application/ld+json":
             self._json_ld = True
             self._json_ld_chunks = []
 
@@ -340,9 +329,7 @@ class _VideoMetadataParser(HTMLParser):
             self._collect_json_ld(graph)
         content_url = value.get("contentUrl")
         if isinstance(content_url, str):
-            self.candidates.append(
-                (urljoin(self.page_url, content_url), None, "jsonld:contentUrl")
-            )
+            self.candidates.append((urljoin(self.page_url, content_url), None, "jsonld:contentUrl"))
 
 
 def _validate_direct_video(
@@ -359,10 +346,7 @@ def _validate_direct_video(
         return None
     if mime_type not in SUPPORTED_VIDEO_MIME_TYPES:
         return None
-    if (
-        metadata.content_length is not None
-        and metadata.content_length > MAX_EXTERNAL_VIDEO_BYTES
-    ):
+    if metadata.content_length is not None and metadata.content_length > MAX_EXTERNAL_VIDEO_BYTES:
         raise VideoResolutionError("Video exceeds Gemini's 100 MB external URL limit.")
     return ResolvedMedia(
         uri=metadata.final_url,
@@ -446,8 +430,7 @@ def resolve_video_url(
             dict.fromkeys(parser.candidates),
             key=lambda item: (
                 item[1] not in SUPPORTED_VIDEO_MIME_TYPES,
-                _normalized_content_type(item[1], item[0])
-                not in SUPPORTED_VIDEO_MIME_TYPES,
+                _normalized_content_type(item[1], item[0]) not in SUPPORTED_VIDEO_MIME_TYPES,
             ),
         )
         for candidate_url, declared_mime, source in candidates[:30]:

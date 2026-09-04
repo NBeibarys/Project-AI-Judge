@@ -4,6 +4,7 @@ Service account (not OAuth) chosen because a 100+ row batch run must be
 non-interactive — no browser consent prompt mid-run. The account's email
 needs Editor access on the Sheet.
 """
+
 import re
 from urllib.parse import urlparse
 
