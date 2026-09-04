@@ -250,7 +250,11 @@ class Config:
             grader_model=grader_model,
             head_model=head_model,
             n_samples=int(os.environ.get("N_SAMPLES", "3")),
-            max_concurrency=int(os.environ.get("MAX_CONCURRENCY", "8")),
+            # 3, not 8: 8 caused sustained 429s in a real 100-row run
+            # (69/100 rows failed) — see .env.example's MAX_CONCURRENCY note.
+            # The default must be the value proven safe in production, since
+            # an operator who never sets the var gets exactly this one.
+            max_concurrency=int(os.environ.get("MAX_CONCURRENCY", "3")),
             checkpoint_path=checkpoint_path,
             program_config=program_config,
         )
