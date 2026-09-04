@@ -1,7 +1,7 @@
 """Kill-in-flight-grading: cooperative cancellation (src/pipeline.py) and
 the asyncio-level cancel path (src/adk_agents/workflow.py).
 
-See docs/superpowers/specs/2026-07-21-kill-in-flight-grading-design.md.
+See docs/design/2026-07-21-kill-in-flight-grading-design.md.
 """
 
 import threading
