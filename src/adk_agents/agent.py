@@ -29,15 +29,9 @@ from google.genai import types
 
 from ..programs import ProgramConfig, get_program_config
 from .schemas import (
-    AlchemistAnalystReport,
-    AlchemistHeadScore,
-    AnalystReport,
-    FellowshipV2AnalystReport,
-    FellowshipV2HeadScore,
-    R2BAnalystReport,
+    ANALYST_SCHEMA_BY_PROGRAM,
+    HEAD_SCHEMA_BY_PROGRAM,
     R2BGraderVerdict,
-    R2BHeadScore,
-    R2BHeadScoreNamed,
 )
 
 # Grader/Head/Analyst temperature: the LLM-as-judge literature
@@ -257,20 +251,10 @@ def build_root_agent(
     re-run for multi-sample averaging without re-running the expensive
     analyst->grader loop.
     """
-    program_config.apply_active_criteria()
-
-    # Use explicit schema with named criteria fields for Fellowship V2 and
-    # Alchemist so Gemini knows exactly what keys to fill. Generic
-    # dict[str, ...] produces empty results because the model doesn't know
-    # the keys.
-    if program_config.program == "fellowship_v2":
-        analyst_schema = FellowshipV2AnalystReport
-    elif program_config.program == "alchemist":
-        analyst_schema = AlchemistAnalystReport
-    elif program_config.program == "r2b":
-        analyst_schema = R2BAnalystReport
-    else:
-        analyst_schema = AnalystReport
+    # Every program has its own schema with named criteria fields so Gemini
+    # knows exactly what keys to fill; a generic dict[str, ...] produces
+    # empty results because the model doesn't know the keys.
+    analyst_schema = ANALYST_SCHEMA_BY_PROGRAM[program_config.program]
 
     analyst = Agent(
         name="analyst",
@@ -403,19 +387,8 @@ def build_head_agent(
     workflow re-runs this Head N_SAMPLES times and averages the criterion
     scores, selecting rationale from the run closest to the average.
     """
-    program_config.apply_active_criteria()
-
-    # Use explicit schema with named criteria fields for Fellowship V2 and
-    # Alchemist. The generic R2BHeadScore dict schema produces empty results
-    # because the model doesn't know the criterion names.
-    if program_config.program == "fellowship_v2":
-        head_schema = FellowshipV2HeadScore
-    elif program_config.program == "alchemist":
-        head_schema = AlchemistHeadScore
-    elif program_config.program == "r2b":
-        head_schema = R2BHeadScoreNamed
-    else:
-        head_schema = R2BHeadScore
+    # Named per-program schema, same reason as the analyst's above.
+    head_schema = HEAD_SCHEMA_BY_PROGRAM[program_config.program]
 
     return Agent(
         name="head",

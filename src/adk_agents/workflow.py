@@ -275,7 +275,7 @@ class AdkReviewWorkflow:
     ) -> dict:
         """Run the Head scorer once on the approved evidence.
 
-        Returns the Head's R2BHeadScore output as a dict
+        Returns the Head's output as a dict
         (criterion_scores, criterion_rationale, final_score, confidence, ...).
         Raises on failure (caller catches and excludes from average).
         """

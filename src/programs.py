@@ -31,10 +31,6 @@ from .adk_agents.schemas import (
     RUBRIC_CRITERIA,
     RUBRIC_CRITERIA_ALCHEMIST,
     RUBRIC_CRITERIA_R2B,
-    RUBRIC_WEIGHTS,
-    RUBRIC_WEIGHTS_ALCHEMIST,
-    RUBRIC_WEIGHTS_R2B,
-    set_active_criteria,
 )
 
 ProgramName = Literal["fellowship_v2", "r2b", "alchemist"]
@@ -46,16 +42,10 @@ class ProgramConfig:
 
     program: ProgramName
     rubric_criteria: tuple[str, ...]
-    rubric_weights: dict[str, float]
     rubric_text: str
     analyst_instruction: str
     grader_instruction: str
     source_priority: Literal["text_primary", "video_primary"]
-    # Whether this program uses a separate Head scorer (R2B) vs. a combined
-    # grader-verifies-and-scores agent (fellowship). When True, the workflow
-    # runs the analyst->grader verify loop, then a separate Head agent that
-    # scores approved evidence; multi-sample averaging re-runs the Head only.
-    uses_separate_head: bool
     # Sheet geometry — env var names this program reads.
     sheet_id_env: str
     sheet_range_env: str
@@ -115,8 +105,7 @@ class ProgramConfig:
     # (and the concurrency failure it caused) actually lives. Confirmed via
     # git blame that "Head sees raw media" was never a deliberate Alchemist
     # choice — it was introduced in R2B's original commit and inherited by
-    # every uses_separate_head=True program through the shared
-    # _run_head_once function.
+    # every program through the shared _run_head_once function.
     head_include_media: bool = True
     # Thinking level for the grader and Head, set explicitly per program
     # rather than derived from head_include_media or hardcoded. These used
@@ -135,7 +124,7 @@ class ProgramConfig:
     # R2B_HEAD_INSTRUCTION/agent.py's build_head_agent for the live A/B
     # test that validated LOW for a media-less, text-only Head.
     head_thinking_level: Literal["LOW", "HIGH"] = "HIGH"
-    # Head scorer instruction (only used when uses_separate_head=True).
+    # Head scorer instruction (every program runs a separate Head).
     head_instruction: str = ""
     # Whether a pitch deck PDF is required for this program. When True,
     # the pipeline ingests the pitch deck (Google Slides / Drive PDF) as
@@ -186,24 +175,15 @@ class ProgramConfig:
     excluded_header_substrings: tuple = ()
     excluded_header_names: frozenset = frozenset({'', 'AI', 'AI_Reasoning', 'AI Reasoning', 'Total'})
 
-    def apply_active_criteria(self) -> None:
-        """Set the module-level active criteria the Pydantic validators read.
-        Must be called before building agents so the output_schema validators
-        enforce the right criteria set."""
-        set_active_criteria(self.rubric_criteria)
-
-
 # --- Fellowship V2 (9 criteria, 5-band 1-10, new sheet) --------------------
 
 FELLOWSHIP_V2_CONFIG = ProgramConfig(
     program="fellowship_v2",
     rubric_criteria=RUBRIC_CRITERIA,
-    rubric_weights=RUBRIC_WEIGHTS,
     rubric_text=FELLOWSHIP_V2_RUBRIC_TEXT,
     analyst_instruction=FELLOWSHIP_V2_ANALYST_INSTRUCTION,
     grader_instruction=FELLOWSHIP_V2_GRADER_INSTRUCTION,
     source_priority="video_primary",
-    uses_separate_head=True,
     head_instruction=FELLOWSHIP_V2_HEAD_INSTRUCTION,
     # Aligned with R2B/Alchemist (2026-07-21 session): the Head scores from
     # the analyst's approved text evidence only, not the raw video — the
@@ -260,12 +240,10 @@ FELLOWSHIP_V2_CONFIG = ProgramConfig(
 R2B_CONFIG = ProgramConfig(
     program="r2b",
     rubric_criteria=RUBRIC_CRITERIA_R2B,
-    rubric_weights=RUBRIC_WEIGHTS_R2B,
     rubric_text=R2B_RUBRIC_TEXT,
     analyst_instruction=R2B_ANALYST_INSTRUCTION,
     grader_instruction=R2B_GRADER_INSTRUCTION,
     source_priority="video_primary",
-    uses_separate_head=True,
     head_instruction=R2B_HEAD_INSTRUCTION,
     max_verify_iterations=2,
     sheet_id_env="R2B_SHEET_ID",
@@ -317,12 +295,10 @@ R2B_CONFIG = ProgramConfig(
 ALCHEMIST_CONFIG = ProgramConfig(
     program="alchemist",
     rubric_criteria=RUBRIC_CRITERIA_ALCHEMIST,
-    rubric_weights=RUBRIC_WEIGHTS_ALCHEMIST,
     rubric_text=ALCHEMIST_RUBRIC_TEXT,
     analyst_instruction=ALCHEMIST_ANALYST_INSTRUCTION,
     grader_instruction=ALCHEMIST_GRADER_INSTRUCTION,
     source_priority="text_primary",
-    uses_separate_head=True,
     requires_pitch_deck=True,
     head_instruction=ALCHEMIST_HEAD_INSTRUCTION,
     # Aligned with R2B: same latency-driven cap (most rows converge in

@@ -2,9 +2,10 @@
 
 All programs use the separate-head architecture with 3 distinct roles:
 
-  - analyst  -> AnalystReport      (extract evidence only, no score)
+  - analyst  -> per-program named evidence schema (extract evidence only,
+                no score)
   - grader   -> R2BGraderVerdict   (verify only: approve/reject + feedback)
-  - head     -> R2BHeadScore       (score only, after approval)
+  - head     -> per-program named score schema (score only, after approval)
 
 The grader never scores; the head never verifies. This separation is what
 makes multi-sample averaging of the Head meaningful (research gap #5):
@@ -15,14 +16,10 @@ That config emits ``additionalProperties: false`` in the generated JSON
 schema, which the genai SDK serializes as ``additional_properties``. The
 Gemini Developer API (API key) rejects this field with 400
 INVALID_ARGUMENT ("Unknown name 'additional_properties'"); Vertex AI
-accepted it. The ``model_validator`` decorators on AnalystReport,
-R2BGraderVerdict, and R2BHeadScore enforce the rubric contract at
-validation time, so extra-field rejection at the schema level is not
+accepted it. Each named schema declares every criterion as a required,
+bounded field, and R2BGraderVerdict's ``model_validator`` enforces the
+verdict contract, so extra-field rejection at the schema level is not
 required.
-
-The AnalystReport validator reads the active-criteria set from a
-module-level slot that ``set_active_criteria`` updates. Each program sets
-its own criteria set at agent-build time.
 """
 from typing import Literal, Optional
 
@@ -44,8 +41,6 @@ RUBRIC_CRITERIA = (
     "Communication quality",
 )
 
-RUBRIC_WEIGHTS = {criterion: round(1.0 / len(RUBRIC_CRITERIA), 4) for criterion in RUBRIC_CRITERIA}
-
 # ---------------------------------------------------------------------------
 # R2B rubric (6 criteria, 3-band: 1-3 / 4-6 / 7-10, equal weights)
 # ---------------------------------------------------------------------------
@@ -59,8 +54,6 @@ RUBRIC_CRITERIA_R2B = (
     "Presentation & Clarity",
 )
 
-RUBRIC_WEIGHTS_R2B = {criterion: round(1.0 / 6.0, 4) for criterion in RUBRIC_CRITERIA_R2B}
-
 # ---------------------------------------------------------------------------
 # Alchemist rubric (4 criteria, 5-band: 1-2 / 3-4 / 5-6 / 7-8 / 9-10, equal weights)
 # ---------------------------------------------------------------------------
@@ -71,31 +64,6 @@ RUBRIC_CRITERIA_ALCHEMIST = (
     "Scalability & Readiness for the U.S. Market",
     "Team Strength",
 )
-
-RUBRIC_WEIGHTS_ALCHEMIST = {
-    criterion: round(1.0 / 4.0, 4) for criterion in RUBRIC_CRITERIA_ALCHEMIST
-}
-
-# ---------------------------------------------------------------------------
-# Active criteria slot — the AnalystReport validator reads this indirection
-# so a program switch (fellowship <-> R2B) changes which keys the contract
-# enforces, without subclassing the model. Default = fellowship (unchanged).
-# ---------------------------------------------------------------------------
-
-_active_criteria: tuple[str, ...] = RUBRIC_CRITERIA
-
-
-def set_active_criteria(criteria: tuple[str, ...]) -> None:
-    """Switch the enforced criteria set. Called by the program config when
-    building an agent for a non-default program (e.g. R2B). Fellowship callers
-    never call this, so the module-default fellowship set stays active."""
-    global _active_criteria
-    _active_criteria = tuple(criteria)
-
-
-def get_active_criteria() -> tuple[str, ...]:
-    return _active_criteria
-
 
 class CriterionEvidence(BaseModel):
     """Grounded evidence and the qualification needed to interpret it."""
@@ -114,8 +82,8 @@ class FellowshipV2AnalystReport(BaseModel):
     """Explicit schema with all 9 Fellowship criteria as named fields.
 
     This is sent to Gemini as response_schema so the model knows exactly
-    what keys to fill. The generic dict[str, CriterionEvidence] in
-    AnalystReport doesn't convey the required keys to the model.
+    what keys to fill. A generic dict[str, CriterionEvidence] does not
+    convey the required keys to the model.
     """
     # Written FIRST (field order drives generation order in structured
     # output) — same pattern as R2BAnalystReport.video_notes. Fellowship V2
@@ -153,42 +121,6 @@ class FellowshipV2AnalystReport(BaseModel):
     Communication_quality: CriterionEvidence
     missing_sources: list[str] = Field(default_factory=list)
 
-    def to_analyst_report(self) -> "AnalystReport":
-        """Convert to the generic AnalystReport format for downstream agents."""
-        return AnalystReport(
-            criteria={
-                "Originality": self.Originality,
-                "Approach": self.Approach,
-                "Personal connection": self.Personal_connection,
-                "Concreteness": self.Concreteness,
-                "Credibility in context": self.Credibility_in_context,
-                "Trajectory": self.Trajectory,
-                "Program fit": self.Program_fit,
-                "Regional relevance": self.Regional_relevance,
-                "Communication quality": self.Communication_quality,
-            },
-            missing_sources=self.missing_sources,
-        )
-
-
-class AnalystReport(BaseModel):
-    """Exactly one evidence record for every approved rubric criterion."""
-    criteria: dict[str, CriterionEvidence]
-    missing_sources: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def require_complete_rubric(self) -> "AnalystReport":
-        """Fail closed if the model omits, renames, or invents dimensions."""
-        supplied = set(self.criteria)
-        required = set(get_active_criteria())
-        if supplied != required:
-            raise ValueError(
-                "criteria must match the rubric; "
-                f"missing={sorted(required - supplied)}, "
-                f"unexpected={sorted(supplied - required)}"
-            )
-        return self
-
 
 class R2BAnalystReport(BaseModel):
     """Explicit analyst schema for the R2B rubric with concrete field names."""
@@ -221,20 +153,6 @@ class R2BAnalystReport(BaseModel):
     Business_Model: CriterionEvidence
     Presentation_Clarity: CriterionEvidence
     missing_sources: list[str] = Field(default_factory=list)
-
-    def to_analyst_report(self) -> "AnalystReport":
-        """Convert to the generic AnalystReport format for downstream agents."""
-        return AnalystReport(
-            criteria={
-                "Problem & Solution": self.Problem_Solution,
-                "Market Potential": self.Market_Potential,
-                "Product/MVP & Innovation": self.Product_MVP_Innovation,
-                "Team Strength": self.Team_Strength,
-                "Business Model": self.Business_Model,
-                "Presentation & Clarity": self.Presentation_Clarity,
-            },
-            missing_sources=self.missing_sources,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -286,9 +204,10 @@ class R2BGraderVerdict(BaseModel):
 class FellowshipV2HeadScore(BaseModel):
     """Explicit Head scorer schema with all 9 Fellowship criteria as named fields.
 
-    Same purpose as R2BHeadScore but with explicit field names so Gemini
-    knows exactly what keys to fill. Generic dict[str, int] produces empty
-    results because the model doesn't know the criterion names.
+    Same purpose as R2BHeadScoreNamed, for the Fellowship V2 rubric.
+    Explicit field names so Gemini knows exactly what keys to fill: a
+    generic dict[str, int] produces empty results because the model
+    doesn't know the criterion names.
 
     Field order matters here, not just the prompt text: structured-output
     generation follows field declaration order, so each criterion's
@@ -318,7 +237,7 @@ class FellowshipV2HeadScore(BaseModel):
     Communication_quality: int = Field(ge=1, le=10)
     final_score: float = Field(ge=1, le=10)
     confidence: Literal["low", "medium", "high"]
-    # See R2BHeadScore disqualification fields — same contract.
+    # See R2BHeadScoreNamed's disqualification fields — same contract.
     contradiction_found: bool = False
     contradiction_reason: str = ""
     disqualifying_issue_found: bool = False
@@ -327,48 +246,14 @@ class FellowshipV2HeadScore(BaseModel):
     ] = "none"
     disqualifying_issue_reason: str = ""
 
-    def to_head_score(self) -> "R2BHeadScore":
-        """Convert to the generic R2BHeadScore format for averaging."""
-        return R2BHeadScore(
-            criterion_scores={
-                "Originality": self.Originality,
-                "Approach": self.Approach,
-                "Personal connection": self.Personal_connection,
-                "Concreteness": self.Concreteness,
-                "Credibility in context": self.Credibility_in_context,
-                "Trajectory": self.Trajectory,
-                "Program fit": self.Program_fit,
-                "Regional relevance": self.Regional_relevance,
-                "Communication quality": self.Communication_quality,
-            },
-            criterion_rationale={
-                "Originality": self.Originality_rationale,
-                "Approach": self.Approach_rationale,
-                "Personal connection": self.Personal_connection_rationale,
-                "Concreteness": self.Concreteness_rationale,
-                "Credibility in context": self.Credibility_in_context_rationale,
-                "Trajectory": self.Trajectory_rationale,
-                "Program fit": self.Program_fit_rationale,
-                "Regional relevance": self.Regional_relevance_rationale,
-                "Communication quality": self.Communication_quality_rationale,
-            },
-            final_score=self.final_score,
-            confidence=self.confidence,
-            contradiction_found=self.contradiction_found,
-            contradiction_reason=self.contradiction_reason,
-            disqualifying_issue_found=self.disqualifying_issue_found,
-            disqualifying_issue_type=self.disqualifying_issue_type,
-            disqualifying_issue_reason=self.disqualifying_issue_reason,
-        )
-
 
 class AlchemistAnalystReport(BaseModel):
     """Explicit schema with all 4 Alchemist criteria as named fields.
 
     Same purpose as FellowshipV2AnalystReport: sent to Gemini as
-    response_schema so the model knows exactly what keys to fill. The
-    generic dict[str, CriterionEvidence] in AnalystReport doesn't convey
-    the required keys to the model.
+    response_schema so the model knows exactly what keys to fill. A
+    generic dict[str, CriterionEvidence] does not convey the required
+    keys to the model.
     """
     # Written FIRST, before key_facts_cross_check (field order drives
     # generation order in structured output) — mirrors R2BAnalystReport's
@@ -423,26 +308,14 @@ class AlchemistAnalystReport(BaseModel):
     Team_Strength: CriterionEvidence
     missing_sources: list[str] = Field(default_factory=list)
 
-    def to_analyst_report(self) -> "AnalystReport":
-        """Convert to the generic AnalystReport format for downstream agents."""
-        return AnalystReport(
-            criteria={
-                "Product/MVP & Innovation": self.Product_MVP_Innovation,
-                "Market Potential": self.Market_Potential,
-                "Scalability & Readiness for the U.S. Market": self.Scalability_US_Market,
-                "Team Strength": self.Team_Strength,
-            },
-            missing_sources=self.missing_sources,
-        )
-
 
 class AlchemistHeadScore(BaseModel):
     """Explicit Head scorer schema with all 4 Alchemist criteria as named fields.
 
     Same purpose as FellowshipV2HeadScore but for the Alchemist rubric (4
-    criteria instead of 9). The validator enforces 1-10 integer scores and
-    requires rationale for every criterion before the score (rationale-before-
-    score CoT).
+    criteria instead of 9). Every criterion is a required integer 1-10
+    field preceded by its required rationale (rationale-before-score CoT),
+    so the field declarations are the contract.
 
     Field order matters here, not just the prompt text: structured-output
     generation follows field declaration order, so each criterion's
@@ -461,7 +334,7 @@ class AlchemistHeadScore(BaseModel):
     Team_Strength: int = Field(ge=1, le=10)
     final_score: float = Field(ge=1, le=10)
     confidence: Literal["low", "medium", "high"]
-    # See R2BHeadScore disqualification fields — same contract.
+    # See R2BHeadScoreNamed's disqualification fields — same contract.
     contradiction_found: bool = False
     contradiction_reason: str = ""
     disqualifying_issue_found: bool = False
@@ -469,92 +342,6 @@ class AlchemistHeadScore(BaseModel):
         "none", "contradiction", "fraud", "suspicious_application"
     ] = "none"
     disqualifying_issue_reason: str = ""
-
-    def to_head_score(self) -> "R2BHeadScore":
-        """Convert to the generic R2BHeadScore format for averaging."""
-        return R2BHeadScore(
-            criterion_scores={
-                "Product/MVP & Innovation": self.Product_MVP_Innovation,
-                "Market Potential": self.Market_Potential,
-                "Scalability & Readiness for the U.S. Market": self.Scalability_US_Market,
-                "Team Strength": self.Team_Strength,
-            },
-            criterion_rationale={
-                "Product/MVP & Innovation": self.Product_MVP_Innovation_rationale,
-                "Market Potential": self.Market_Potential_rationale,
-                "Scalability & Readiness for the U.S. Market": self.Scalability_US_Market_rationale,
-                "Team Strength": self.Team_Strength_rationale,
-            },
-            final_score=self.final_score,
-            confidence=self.confidence,
-            contradiction_found=self.contradiction_found,
-            contradiction_reason=self.contradiction_reason,
-            disqualifying_issue_found=self.disqualifying_issue_found,
-            disqualifying_issue_type=self.disqualifying_issue_type,
-            disqualifying_issue_reason=self.disqualifying_issue_reason,
-        )
-
-
-class R2BHeadScore(BaseModel):
-    """The Head scorer SCORES ONLY — it does not verify.
-
-    Scores approved evidence 1-10 per criterion using the band-then-integer
-    method. Writes rationale BEFORE score (rationale-before-score CoT). Final
-    score = average of criterion scores. Confidence reflects evidence
-    quality, not video length.
-
-    Used by any program with uses_separate_head=True (R2B with 6 criteria,
-    Fellowship V2 with 9 criteria). The validator reads the active-criteria
-    slot via get_active_criteria() so the same schema enforces the right set
-    regardless of program.
-    """
-    criterion_scores: dict[str, int]
-    criterion_rationale: dict[str, str]
-    final_score: float = Field(ge=1, le=10)
-    confidence: Literal["low", "medium", "high"]
-    # Set true only for a genuine, material contradiction between sources
-    # (e.g. deck vs video vs website disagreeing on a real claim) — not
-    # merely unverified or missing evidence. Kept for backward compatibility;
-    # new Alchemist runs also use the broader disqualifying_issue_* fields.
-    contradiction_found: bool = False
-    contradiction_reason: str = ""
-    # Confirmed issues that should score the whole application 0. This is
-    # intentionally broader than contradiction so fraud/template-like or
-    # materially suspicious applications do not receive ordinary rubric scores.
-    disqualifying_issue_found: bool = False
-    disqualifying_issue_type: Literal[
-        "none", "contradiction", "fraud", "suspicious_application"
-    ] = "none"
-    disqualifying_issue_reason: str = ""
-
-    @model_validator(mode="after")
-    def enforce_score_contract(self) -> "R2BHeadScore":
-        active = set(get_active_criteria())
-        supplied_scores = set(self.criterion_scores)
-        if supplied_scores != active:
-            raise ValueError(
-                "criterion_scores must match the active rubric; "
-                f"missing={sorted(active - supplied_scores)}, "
-                f"unexpected={sorted(supplied_scores - active)}"
-            )
-        for name, value in self.criterion_scores.items():
-            if not isinstance(value, int) or value < 1 or value > 10:
-                raise ValueError(
-                    f"criterion_scores['{name}'] must be an integer 1-10"
-                )
-        supplied_rationale = set(self.criterion_rationale)
-        if supplied_rationale != active:
-            raise ValueError(
-                "criterion_rationale must match the active rubric; "
-                f"missing={sorted(active - supplied_rationale)}, "
-                f"unexpected={sorted(supplied_rationale - active)}"
-            )
-        for name, text in self.criterion_rationale.items():
-            if not text.strip():
-                raise ValueError(
-                    f"criterion_rationale['{name}'] must be non-empty"
-                )
-        return self
 
 
 class R2BHeadScoreNamed(BaseModel):
@@ -573,38 +360,33 @@ class R2BHeadScoreNamed(BaseModel):
     Presentation_Clarity: int = Field(ge=1, le=10)
     final_score: float = Field(ge=1, le=10)
     confidence: Literal["low", "medium", "high"]
+    # Set true only for a genuine, material contradiction between sources
+    # (e.g. deck vs video vs website disagreeing on a real claim) — not
+    # merely unverified or missing evidence. Kept for backward compatibility;
+    # new Alchemist runs also use the broader disqualifying_issue_* fields.
     contradiction_found: bool = False
     contradiction_reason: str = ""
+    # Confirmed issues that should score the whole application 0. This is
+    # intentionally broader than contradiction so fraud/template-like or
+    # materially suspicious applications do not receive ordinary rubric scores.
     disqualifying_issue_found: bool = False
     disqualifying_issue_type: Literal[
         "none", "contradiction", "fraud", "suspicious_application"
     ] = "none"
     disqualifying_issue_reason: str = ""
 
-    def to_head_score(self) -> "R2BHeadScore":
-        """Convert to the generic R2BHeadScore format for downstream agents."""
-        return R2BHeadScore(
-            criterion_scores={
-                "Problem & Solution": self.Problem_Solution,
-                "Market Potential": self.Market_Potential,
-                "Product/MVP & Innovation": self.Product_MVP_Innovation,
-                "Team Strength": self.Team_Strength,
-                "Business Model": self.Business_Model,
-                "Presentation & Clarity": self.Presentation_Clarity,
-            },
-            criterion_rationale={
-                "Problem & Solution": self.Problem_Solution_rationale,
-                "Market Potential": self.Market_Potential_rationale,
-                "Product/MVP & Innovation": self.Product_MVP_Innovation_rationale,
-                "Team Strength": self.Team_Strength_rationale,
-                "Business Model": self.Business_Model_rationale,
-                "Presentation & Clarity": self.Presentation_Clarity_rationale,
-            },
-            final_score=self.final_score,
-            confidence=self.confidence,
-            contradiction_found=self.contradiction_found,
-            contradiction_reason=self.contradiction_reason,
-            disqualifying_issue_found=self.disqualifying_issue_found,
-            disqualifying_issue_type=self.disqualifying_issue_type,
-            disqualifying_issue_reason=self.disqualifying_issue_reason,
-        )
+
+# Program -> output schema, for agent.py's builders and workflow.py's
+# head-output flattening. Replaces the per-program if/elif chains, which
+# carried unreachable generic fallbacks (ProgramName is a 3-value Literal
+# and get_program_config raises on anything else).
+ANALYST_SCHEMA_BY_PROGRAM: dict[str, type[BaseModel]] = {
+    "fellowship_v2": FellowshipV2AnalystReport,
+    "alchemist": AlchemistAnalystReport,
+    "r2b": R2BAnalystReport,
+}
+HEAD_SCHEMA_BY_PROGRAM: dict[str, type[BaseModel]] = {
+    "fellowship_v2": FellowshipV2HeadScore,
+    "alchemist": AlchemistHeadScore,
+    "r2b": R2BHeadScoreNamed,
+}
