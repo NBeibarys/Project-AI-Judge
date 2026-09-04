@@ -6,7 +6,7 @@
 > Reversed since:
 >
 > - **Auto-disqualification (Goals, "score 0 across all 6 criteria" on
->   internal contradiction or fraud) was reversed** in commit `ca735d4`
+>   internal contradiction or fraud) was reversed** on 2026-07-12
 >   after 7 out of 7 live auto-zeros proved to be false positives: currency
 >   conversion, rounding, MRR versus sales, roadmap versus current status,
 >   "250+" versus "300+", and conflicting stated goals. A surviving
@@ -15,7 +15,7 @@
 >   for human review. Zeroing is a human decision.
 >   `ProgramConfig.contradiction_auto_zero` is False for every program.
 > - **The blank-video fallback (Error handling, "criterion-6 note, not a
->   hard failure") was reversed** in commit `5dec2ee`. An R2B row with no
+>   hard failure") was reversed** on 2026-07-20. An R2B row with no
 >   video link is now skipped entirely before any model call, with no
 >   checkpoint entry, so it becomes eligible again the moment a link is
 >   added.
