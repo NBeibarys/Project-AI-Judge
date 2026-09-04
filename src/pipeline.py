@@ -635,6 +635,30 @@ def process_row(
     # server-side, no cut files. Segments are entered by hand; there is no
     # automatic proposer (see round_segments.py's module docstring).
     segment_bounds = _read_segment_bounds(header, row)
+    if (
+        segment_bounds
+        and initial_state.get("video_data")
+        and not initial_state.get("video_url")
+    ):
+        # Tier-2 on Vertex returns inline bytes with no URI, and
+        # server-side clipping needs a URI. Silently grading the full
+        # round recording would grade every startup in the round, not
+        # this applicant, so escalate instead of widening the evidence.
+        note = (
+            "Segment Start/End are set, but this video was downloaded "
+            "inline (Vertex Tier-2), where server-side clipping is "
+            "unavailable. Needs a human: clip locally or replace the "
+            "link with a YouTube URL."
+        )
+        if config.program_config.criterion_column_names:
+            return row_id, {
+                "criterion_scores": {}, "total_score": None,
+                "notes": note, "human_review_flag": True,
+            }
+        return row_id, {
+            "score": None, "reasoning": note, "human_review_flag": True,
+        }
+
     if segment_bounds and initial_state.get("video_url"):
         initial_state["video_segment_start_s"] = segment_bounds[0]
         initial_state["video_segment_end_s"] = segment_bounds[1]
