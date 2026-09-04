@@ -1,7 +1,12 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from src.video_urls import canonicalize_youtube_url, resolve_video_url
+from src.video_urls import (
+    VideoResolutionError,
+    _public_https_host,
+    canonicalize_youtube_url,
+    resolve_video_url,
+)
 
 
 class YouTubeUrlTests(unittest.TestCase):
@@ -40,6 +45,21 @@ class YouTubeUrlTests(unittest.TestCase):
         self.assertEqual(resolved.source, "youtube")
         metadata_fetcher.assert_not_called()
         mock_public_host.assert_called_once()
+
+
+class PublicHostTests(unittest.TestCase):
+    @patch("socket.getaddrinfo")
+    def test_rejects_nat64_mapped_loopback(
+        self, mock_getaddrinfo: MagicMock
+    ) -> None:
+        # ipaddress calls 64:ff9b::7f00:1 global, but on a NAT64 network it
+        # is 127.0.0.1; the explicit prefix deny is what stops it.
+        mock_getaddrinfo.return_value = [
+            (10, 1, 6, "", ("64:ff9b::7f00:1", 443, 0, 0))
+        ]
+
+        with self.assertRaises(VideoResolutionError):
+            _public_https_host("https://nat64.example.com/video.mp4")
 
 
 if __name__ == "__main__":

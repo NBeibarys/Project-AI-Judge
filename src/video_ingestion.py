@@ -43,12 +43,15 @@ import os
 import re
 import time
 from typing import Optional
+from urllib.request import Request
 
 from .google_clients import extract_drive_file_id, is_drive_folder_url
 from .video_urls import (
     ResolvedVideo,
     VideoResolutionError,
+    _public_https_host,
     resolve_video_url,
+    safe_opener,
 )
 
 # Gemini Files API: 2GB per file (paid tier 20GB). We cap downloads at 2GB
@@ -337,11 +340,14 @@ def _download_https(url: str) -> bytes:
     A short timeout turns that into a fast, honest VideoResolutionError
     instead of tying up a worker thread for most of 5 minutes per attempt.
     """
-    # Reuse video_urls' SSRF-safe redirect handler for consistency.
-    from urllib.request import build_opener, Request
-    from .video_urls import _SafeRedirectHandler
-
-    opener = build_opener(_SafeRedirectHandler())
+    # SSRF guard, same policy as Tier-1: this helper is reachable with raw
+    # applicant-submitted URLs (Alchemist pitch-deck links reach it without
+    # passing resolve_video_url), so it must validate the destination itself
+    # instead of relying on callers. safe_opener rejects non-HTTPS,
+    # credential-bearing and private-network targets before the first
+    # request, and returns an opener that can only dispatch HTTPS; every
+    # caller already treats the resulting error as "link unresolvable".
+    opener = safe_opener(url)
     headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
     req = Request(url, headers=headers, method="GET")
     chunks = []
@@ -412,10 +418,9 @@ def _https_content_length(url: str) -> Optional[int]:
     """HEAD request for Content-Length. Returns None if unavailable —
     callers should treat unknown size as "assume it needs downloading"
     rather than risk sending an oversized URI reference to Vertex."""
-    from urllib.request import build_opener, Request
-    from .video_urls import _SafeRedirectHandler
-
-    opener = build_opener(_SafeRedirectHandler())
+    # SSRF guard: same rationale as _download_https — this helper also takes
+    # raw applicant-submitted URLs, so it validates before it connects.
+    opener = safe_opener(url)
     headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
     req = Request(url, headers=headers, method="HEAD")
     try:
@@ -434,10 +439,9 @@ def _https_pdf_head_metadata(url: str) -> tuple[Optional[str], Optional[int]]:
     to the existing, fully-validated download path rather than risk
     sending an unverified reference to Gemini.
     """
-    from urllib.request import build_opener, Request
-    from .video_urls import _SafeRedirectHandler
-
-    opener = build_opener(_SafeRedirectHandler())
+    # SSRF guard: same rationale as _download_https — this helper also takes
+    # raw applicant-submitted URLs, so it validates before it connects.
+    opener = safe_opener(url)
     headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
     req = Request(url, headers=headers, method="HEAD")
     try:
@@ -811,6 +815,11 @@ def ingest_pitch_deck(
                     and content_length is not None
                     and content_length <= VERTEX_URI_FETCH_MAX_BYTES
                 ):
+                    # The fast path hands this raw URL to Gemini, which
+                    # fetches it server-side, so the URI must be validated
+                    # in its own right rather than inheriting the HEAD
+                    # request's guard — never emit an unvalidated file_uri.
+                    _public_https_host(submitted_url)
                     return ResolvedVideo(
                         uri=submitted_url,
                         mime_type=PITCH_DECK_MIME_TYPE,

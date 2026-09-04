@@ -15,7 +15,15 @@ from html.parser import HTMLParser
 from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urljoin, urlparse
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import (
+    HTTPDefaultErrorHandler,
+    HTTPErrorProcessor,
+    HTTPRedirectHandler,
+    HTTPSHandler,
+    OpenerDirector,
+    Request,
+    build_opener,
+)
 
 
 # These are Gemini's documented video inputs, not deployment-specific policy.
@@ -39,6 +47,10 @@ MAX_METADATA_HTML_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 5
 METADATA_TIMEOUT_SECONDS = 15
 YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+# Python 3.12's ipaddress treats the NAT64 well-known prefix as global
+# (64:ff9b::/96 can map to IPv4 loopback on NAT64 networks), so is_global
+# alone lets a AAAA record for 64:ff9b::7f00:1 through. Deny explicitly.
+_NAT64_PREFIX = ipaddress.ip_network("64:ff9b::/96")
 
 
 class VideoResolutionError(ValueError):
@@ -104,14 +116,16 @@ def _public_https_host(url: str) -> str:
     host = (parsed.hostname or "").rstrip(".").lower()
     if parsed.scheme != "https" or not host or parsed.username or parsed.password:
         raise VideoResolutionError(
-            "Video URLs must use public HTTPS without embedded credentials."
+            "Media URLs must use public HTTPS without embedded credentials."
         )
     try:
         addresses = {entry[4][0] for entry in socket.getaddrinfo(host, 443)}
     except socket.gaierror as exc:
         raise VideoResolutionError(f"Video host could not be resolved: {host}.") from exc
     if not addresses or any(
-        not ipaddress.ip_address(address).is_global for address in addresses
+        not ipaddress.ip_address(address).is_global
+        or ipaddress.ip_address(address) in _NAT64_PREFIX
+        for address in addresses
     ):
         raise VideoResolutionError(
             "Video host resolves to a private or non-public network address."
@@ -132,6 +146,28 @@ class _SafeRedirectHandler(HTTPRedirectHandler):
             raise VideoResolutionError("Video URL exceeded the redirect limit.")
         _public_https_host(newurl)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def safe_opener(url: str) -> OpenerDirector:
+    """Validate the destination, then build an opener that can only
+    dispatch HTTPS. build_opener() installs file/ftp/data handlers by
+    default, so _SafeRedirectHandler alone is not sufficient: it
+    validates redirect hops, never the first request, and a
+    non-HTTP(S) scheme would still be dispatched. The explicit handler
+    set makes file:/ftp:/data: undispatchable no matter what a caller
+    passes. Operators behind an egress proxy are unsupported on this
+    path; Tier-2 downloads go direct."""
+
+    _public_https_host(url)
+    opener = OpenerDirector()
+    for handler in (
+        HTTPSHandler(),
+        HTTPDefaultErrorHandler(),
+        _SafeRedirectHandler(),
+        HTTPErrorProcessor(),
+    ):
+        opener.add_handler(handler)
+    return opener
 
 
 def _normalized_content_type(raw_value: str | None, url: str) -> str:
