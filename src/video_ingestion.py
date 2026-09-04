@@ -56,6 +56,7 @@ from urllib.request import Request
 
 from .google_clients import extract_drive_file_id, is_drive_folder_url
 from .video_urls import (
+    USER_AGENT,
     ResolvedMedia,
     VideoResolutionError,
     _public_https_host,
@@ -350,7 +351,7 @@ def _download_https(url: str) -> bytes:
     # request, and returns an opener that can only dispatch HTTPS; every
     # caller already treats the resulting error as "link unresolvable".
     opener = safe_opener(url)
-    headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
+    headers = {"User-Agent": USER_AGENT}
     req = Request(url, headers=headers, method="GET")
     chunks = []
     written = 0
@@ -423,7 +424,7 @@ def _https_content_length(url: str) -> Optional[int]:
     # SSRF guard: same rationale as _download_https — this helper also takes
     # raw applicant-submitted URLs, so it validates before it connects.
     opener = safe_opener(url)
-    headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
+    headers = {"User-Agent": USER_AGENT}
     req = Request(url, headers=headers, method="HEAD")
     try:
         with opener.open(req, timeout=15) as response:
@@ -444,7 +445,7 @@ def _https_pdf_head_metadata(url: str) -> tuple[Optional[str], Optional[int]]:
     # SSRF guard: same rationale as _download_https — this helper also takes
     # raw applicant-submitted URLs, so it validates before it connects.
     opener = safe_opener(url)
-    headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
+    headers = {"User-Agent": USER_AGENT}
     req = Request(url, headers=headers, method="HEAD")
     try:
         with opener.open(req, timeout=15) as response:

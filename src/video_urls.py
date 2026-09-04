@@ -48,6 +48,9 @@ MAX_EXTERNAL_VIDEO_BYTES = 100 * 1024 * 1024
 MAX_METADATA_HTML_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 5
 METADATA_TIMEOUT_SECONDS = 15
+# One identity for every outbound applicant-link request, in both tiers, so
+# a server that blocks or rate-limits this client sees a single name.
+USER_AGENT = "ai-judge/1.0"
 YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 # Python 3.12's ipaddress treats the NAT64 well-known prefix as global
 # (64:ff9b::/96 can map to IPv4 loopback on NAT64 networks), so is_global
@@ -201,7 +204,7 @@ def _request_metadata(url: str) -> ResourceMetadata:
 
     _public_https_host(url)
     opener = build_opener(_SafeRedirectHandler())
-    headers = {"User-Agent": "AI-Fellowship-Agent/1.0"}
+    headers = {"User-Agent": USER_AGENT}
     used_head = True
     # Every opener.open() below (the initial HEAD, the 403/405/501 GET
     # fallback, and the HTML-body GET) is network I/O and can raise
