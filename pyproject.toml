@@ -1,9 +1,35 @@
 [project]
-name = "ai-fellowship-agent"
+name = "ai-judge"
 version = "0.1.0"
-description = "Multimodal ADK workflow for evidence-grounded fellowship review"
+description = "Multi-agent Gemini grading pipeline for startup and fellowship applications in Google Sheets"
+readme = "README.md"
 requires-python = ">=3.12,<3.13"
-dynamic = ["dependencies"]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Beibarys Nyussupov" }]
+keywords = ["llm-as-a-judge", "google-adk", "gemini", "google-sheets", "multi-agent"]
 
-[tool.setuptools.dynamic]
-dependencies = { file = ["requirements.txt"] }
+# Runtime dependencies live in requirements.txt, the single pinned source of
+# truth. There is deliberately no [build-system]: this repository is run
+# (python -m src.main / streamlit run app.py), never installed as a package,
+# so a build backend would be config with nothing to configure.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E4/E7/E9 (imports, statements, syntax), F (pyflakes), I (import order),
+# UP (pyupgrade), B (bugbear). E501 is deliberately absent: line length is
+# enforced by ruff format, not the linter, so long explanatory comments are
+# never flagged. Bandit (S) and pylint (PLW) findings in this codebase
+# (best-effort except-pass, subprocess with manual returncode checks) are
+# deliberate and documented in comments, so they stay review tools, not CI
+# gates.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Both files must manipulate sys.path / load .env before importing project
+# modules, so module-level imports genuinely cannot come first.
+"app.py" = ["E402"]
+"scripts/*.py" = ["E402"]
