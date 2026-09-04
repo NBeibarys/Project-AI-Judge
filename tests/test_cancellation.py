@@ -8,8 +8,8 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from src.pipeline import RowCancelled, process_row, run_batch
 from src.adk_agents import workflow as workflow_module
+from src.pipeline import RowCancelled, process_row, run_batch
 
 
 class ProcessRowCancellationTests(unittest.TestCase):

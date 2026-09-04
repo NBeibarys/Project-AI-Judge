@@ -5,7 +5,6 @@ non-interactive — no browser consent prompt mid-run. The account's email
 needs Editor access on the Sheet.
 """
 import re
-from typing import Optional
 from urllib.parse import urlparse
 
 from google.oauth2 import service_account
@@ -71,7 +70,7 @@ def get_sheets_service(service_account_path: str):
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
 
 
-def extract_drive_file_id(url: str) -> Optional[str]:
+def extract_drive_file_id(url: str) -> str | None:
     """Pull the file ID out of a Drive share link.
 
     Form respondents paste whatever URL Drive's share dialog gives them —

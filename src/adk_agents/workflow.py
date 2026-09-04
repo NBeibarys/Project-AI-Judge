@@ -34,9 +34,9 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
+from ..programs import ProgramConfig
 from .agent import build_head_agent, build_root_agent
 from .schemas import HEAD_SCHEMA_BY_PROGRAM
-from ..programs import ProgramConfig
 
 # One persistent event loop per worker thread, reused across every row that
 # thread processes — not a new asyncio.run() per row. pipeline.py's

@@ -50,7 +50,6 @@ import re
 import subprocess
 import tempfile
 import time
-from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import Request
 
@@ -371,8 +370,8 @@ def _download_https(url: str) -> bytes:
 
 def _upload_or_wrap(
     data: bytes,
-    mime_type: Optional[str],
-) -> tuple[Optional[str], Optional[bytes]]:
+    mime_type: str | None,
+) -> tuple[str | None, bytes | None]:
     """Turn downloaded bytes into whatever the workflow needs to build a Part.
 
     Returns (uri, data) — exactly one is non-None, matching ResolvedMedia's
@@ -417,7 +416,7 @@ def _upload_or_wrap(
     raise VideoResolutionError("Gemini Files API upload timed out (5 min).")
 
 
-def _https_content_length(url: str) -> Optional[int]:
+def _https_content_length(url: str) -> int | None:
     """HEAD request for Content-Length. Returns None if unavailable —
     callers should treat unknown size as "assume it needs downloading"
     rather than risk sending an oversized URI reference to Vertex."""
@@ -434,7 +433,7 @@ def _https_content_length(url: str) -> Optional[int]:
         return None
 
 
-def _https_pdf_head_metadata(url: str) -> tuple[Optional[str], Optional[int]]:
+def _https_pdf_head_metadata(url: str) -> tuple[str | None, int | None]:
     """HEAD request for Content-Type and Content-Length together.
 
     Used to qualify a direct pitch-deck URL for the no-download fast path
@@ -504,7 +503,7 @@ def ingest_video(
     routes that to human review.
     """
     # Tier 1 first.
-    resolved: Optional[ResolvedMedia] = None
+    resolved: ResolvedMedia | None = None
     try:
         resolved = resolve_video_url(submitted_url)
     except VideoResolutionError:

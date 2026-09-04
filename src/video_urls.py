@@ -12,9 +12,9 @@ import json
 import mimetypes
 import re
 import socket
+from collections.abc import Callable
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import (
@@ -26,7 +26,6 @@ from urllib.request import (
     Request,
     build_opener,
 )
-
 
 # These are Gemini's documented video inputs, not deployment-specific policy.
 SUPPORTED_VIDEO_MIME_TYPES = frozenset(

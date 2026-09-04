@@ -31,15 +31,15 @@ if _REPO_DIR not in sys.path:
 from src.adk_agents import cancel_all_active
 from src.checkpoint import Checkpoint
 from src.config import Config
+from src.google_clients import get_sheets_service, read_sheet_rows
 from src.pipeline import (
-    run_batch,
     _derive_row_id,
     _find_duplicate_emails,
     _find_name_column_index,
     _resolve_name_column_index,
+    run_batch,
 )
 from src.programs import DEFAULT_SHEET_RANGE, get_program_config
-from src.google_clients import get_sheets_service, read_sheet_rows
 
 PROGRAM_LABELS = {
     "alchemist": "Alchemist",

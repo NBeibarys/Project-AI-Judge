@@ -21,7 +21,7 @@ bounded field, and GraderVerdict's ``model_validator`` enforces the
 verdict contract, so extra-field rejection at the schema level is not
 required.
 """
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -76,7 +76,7 @@ class CriterionEvidence(BaseModel):
     # 'unverified' = appears in only one source (DO NOT penalize);
     # 'contradicted' = two of the applicant's own sources conflict on the
     # same fact (flag for grader). The Head scorer does not use this field.
-    verification: Optional[Literal["verified", "unverified", "contradicted"]] = None
+    verification: Literal["verified", "unverified", "contradicted"] | None = None
 
 
 class FellowshipV2AnalystReport(BaseModel):

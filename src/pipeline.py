@@ -18,13 +18,13 @@ import re
 import threading
 import unicodedata
 from collections import Counter
-from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import CancelledError as FutureCancelledError
 from urllib.parse import urlparse
 
+from .adk_agents import AdkReviewWorkflow
 from .checkpoint import Checkpoint
 from .config import Config
-from .adk_agents import AdkReviewWorkflow
 from .google_clients import (
     fetch_sheet_row,
     get_sheets_service,
@@ -36,14 +36,14 @@ from .google_clients import (
     write_reasoning_only,
     write_row_result,
 )
-from .video_urls import ResolvedMedia, VideoResolutionError, resolve_video_url
-from .video_ingestion import ingest_pitch_deck, ingest_video
 from .round_segments import (
     SEGMENT_END_COLUMN,
     SEGMENT_START_COLUMN,
     SegmentValidationError,
     parse_timestamp,
 )
+from .video_ingestion import ingest_pitch_deck, ingest_video
+from .video_urls import ResolvedMedia, VideoResolutionError, resolve_video_url
 
 # Header exclusion lists are program-specific — see ProgramConfig fields
 # excluded_header_substrings and excluded_header_names in src/programs.py.

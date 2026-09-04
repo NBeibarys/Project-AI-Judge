@@ -5,10 +5,10 @@ takes seconds end-to-end, so there is no value in resuming inside one.
 What matters at 100+ rows is skipping rows already graded on rerun
 (after a crash, rate-limit, or manual interrupt).
 """
+import hashlib
 import json
 import os
 import threading
-import hashlib
 
 
 class Checkpoint:
@@ -29,7 +29,7 @@ class Checkpoint:
 
     def _load(self) -> dict:
         if os.path.isfile(self.path):
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(self.path, encoding="utf-8") as f:
                 return json.load(f)
         return {}
 

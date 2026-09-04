@@ -18,7 +18,7 @@ from google import genai
 from google.genai import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.round_segments import parse_timestamp  # noqa: E402
+from src.round_segments import parse_timestamp
 
 
 def main() -> None:
