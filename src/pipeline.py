@@ -380,7 +380,6 @@ def _retry_without_video(workflow, initial_state: dict, exc: Exception) -> dict:
     no_video_state.pop("video_data", None)
     no_video_state.pop("video_url", None)
     no_video_state.pop("video_mime_type", None)
-    no_video_state.pop("video_source", None)
     size_note = f" ({video_size / 1e6:.0f}MB)" if video_size else ""
     no_video_state["video_error"] = (
         f"Video{size_note} excluded from analysis — processing failed "
@@ -455,7 +454,6 @@ def process_row(
             excluded_header_names=config.program_config.excluded_header_names,
             excluded_header_substrings=config.program_config.excluded_header_substrings,
         ),
-        "retry_count": 0,
     }
 
     _raise_if_cancelled()
@@ -485,9 +483,7 @@ def process_row(
                     },
                 }),
                 "human_review_flag": True,
-                "skipped_no_pitch_deck": True,
             }
-        initial_state["submitted_pitch_deck_url"] = submitted_pitch_deck_url
         try:
             resolved_deck = ingest_pitch_deck(
                 submitted_pitch_deck_url,
@@ -497,7 +493,6 @@ def process_row(
             initial_state["pitch_deck_url"] = resolved_deck.uri
             initial_state["pitch_deck_data"] = resolved_deck.data
             initial_state["pitch_deck_mime_type"] = resolved_deck.mime_type
-            initial_state["pitch_deck_source"] = resolved_deck.source
             initial_state["pitch_deck_chart_text"] = resolved_deck.chart_text
         except VideoResolutionError as exc:
             # A deck link was submitted but is deterministically unfetchable
@@ -521,14 +516,12 @@ def process_row(
                     },
                 }),
                 "human_review_flag": True,
-                "skipped_no_pitch_deck": True,
             }
 
     _raise_if_cancelled()
 
     submitted_video_url = _submitted_video_url(header, row)
     if submitted_video_url:
-        initial_state["submitted_video_url"] = submitted_video_url
         # Video resolution is source_priority-agnostic so that Drive videos
         # are ingested as native multimodal Parts for every program, not just
         # R2B. The path is:
@@ -583,7 +576,6 @@ def process_row(
             initial_state["video_url"] = resolved_video.uri
             initial_state["video_data"] = resolved_video.data
             initial_state["video_mime_type"] = resolved_video.mime_type
-            initial_state["video_source"] = resolved_video.source
             initial_state["video_original_size_bytes"] = (
                 resolved_video.original_size_bytes
             )
@@ -800,95 +792,6 @@ def process_row(
     }
 
 
-def run_one(config: Config, row_index: int = 0, *, force: bool = False) -> dict:
-    """Run the complete ADK workflow for one sheet row and write its result."""
-    sheets_service = get_sheets_service(config.service_account_path)
-    checkpoint = Checkpoint(config.checkpoint_path)
-    workflow = _build_workflow(config)
-
-    header, rows = read_sheet_rows(
-        sheets_service,
-        config.sheet_id,
-        config.sheet_range,
-        config.header_row,
-    )
-    # Skip non-data rows that sit between the header and the first applicant
-    # row (e.g. Fellowship V2's sub-header row 2). data_start_offset is 0 for
-    # Fellowship/R2B (data starts right after the header), so this is a no-op
-    # for them and preserves their existing behavior exactly.
-    offset = config.program_config.data_start_offset
-    rows = rows[offset:]
-    if row_index < 0 or row_index >= len(rows):
-        raise IndexError(f"Applicant row index {row_index} is out of range for {len(rows)} rows.")
-
-    sheet_name = config.sheet_range.split("!")[0]
-    sheet_row_number = config.header_row + row_index + 1 + offset
-    # When there is no separate merged top-label row (top_label_row=0, as on
-    # the Fellowship V2 sheet), output columns live on the header row itself —
-    # resolve them from `header` instead of fetching a nonexistent row 0.
-    if config.top_label_row > 0:
-        top_label_header = fetch_sheet_row(
-            sheets_service,
-            config.sheet_id,
-            sheet_name,
-            config.top_label_row,
-        )
-    else:
-        top_label_header = header
-    if config.program_config.criterion_column_names:
-        col_map = resolve_multi_output_columns(
-            top_label_header,
-            config.program_config.criterion_column_names,
-            config.program_config.total_score_column_name,
-            config.program_config.notes_column_name,
-        )
-    else:
-        col_map = resolve_output_columns(
-            top_label_header,
-            score_column_name=config.program_config.score_column_name,
-            reasoning_column_name=config.program_config.reasoning_column_name,
-        )
-
-    duplicate_emails = _find_duplicate_emails(header, rows)
-    row_id, result = process_row(
-        config,
-        workflow,
-        header,
-        rows[row_index],
-        sheet_row_number,
-        checkpoint,
-        force=force,
-        duplicate_emails=duplicate_emails,
-    )
-    if result is None:
-        return {"row_id": row_id, "skipped": True}
-
-    if config.program_config.criterion_column_names:
-        write_multi_row_result(
-            sheets_service,
-            config.sheet_id,
-            sheet_name,
-            sheet_row_number,
-            col_map,
-            result["criterion_scores"],
-            result["total_score"],
-            result["notes"],
-        )
-    else:
-        write_row_result(
-            sheets_service,
-            config.sheet_id,
-            sheet_name,
-            sheet_row_number,
-            col_map,
-            result["score"],
-            result["reasoning"],
-        )
-    # Checkpoint only after the authoritative external write succeeds.
-    checkpoint.mark_done(row_id, result["human_review_flag"])
-    return {"row_id": row_id, **result}
-
-
 def run_batch(
     config: Config,
     force: bool = False,
@@ -926,12 +829,6 @@ def run_batch(
 
     header, rows = read_sheet_rows(sheets_service, config.sheet_id, config.sheet_range, config.header_row)
     sheet_name = config.sheet_range.split("!")[0]
-
-    # Skip non-data rows between the header and the first applicant row
-    # (Fellowship V2's sub-header row 2). No-op for Fellowship/R2B where
-    # data_start_offset=0.
-    offset = config.program_config.data_start_offset
-    rows = rows[offset:]
 
     # "AI" / "AI Reasoning" are named on the merged TOP label row, not the
     # per-column header row `header` holds — fetch that row separately
@@ -979,7 +876,7 @@ def run_batch(
         futures = {}
         submitted = 0
         for i, row in enumerate(rows):
-            sheet_row_number = i + config.header_row + 1 + offset  # header_row + sub-header skip + 1-indexing
+            sheet_row_number = i + config.header_row + 1  # header row + 1-indexing
             if target_row_number is not None and sheet_row_number != target_row_number:
                 continue
             if limit is not None and submitted >= limit:

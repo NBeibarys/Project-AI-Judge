@@ -141,7 +141,6 @@ class RunBatchCancelWhileQueuedTests(unittest.TestCase):
         config.header_row = 1
         config.top_label_row = 0
         config.max_concurrency = max_concurrency
-        config.program_config.data_start_offset = 0
         config.program_config.criterion_column_names = None
         config.program_config.score_column_name = "Score"
         config.program_config.reasoning_column_name = "Reasoning"

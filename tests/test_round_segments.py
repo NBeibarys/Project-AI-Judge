@@ -1,11 +1,7 @@
 import unittest
 
 from src.pipeline import _read_segment_bounds, _segment_needs_human_review
-from src.round_segments import (
-    SegmentValidationError,
-    parse_timestamp,
-    seconds_to_timestamp,
-)
+from src.round_segments import SegmentValidationError, parse_timestamp
 
 
 class ParseTimestampTests(unittest.TestCase):
@@ -27,14 +23,6 @@ class ParseTimestampTests(unittest.TestCase):
         for bad in ("", "12", "1:2:3:4", "3:75", "1:61:03", "abc", "3:1x"):
             with self.assertRaises(SegmentValidationError, msg=bad):
                 parse_timestamp(bad)
-
-
-class SecondsToTimestampTests(unittest.TestCase):
-    def test_under_an_hour(self) -> None:
-        self.assertEqual(seconds_to_timestamp(192), "3:12")
-
-    def test_over_an_hour(self) -> None:
-        self.assertEqual(seconds_to_timestamp(3768), "1:02:48")
 
 
 class ReadSegmentBoundsTests(unittest.TestCase):

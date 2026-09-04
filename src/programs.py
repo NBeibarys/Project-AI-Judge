@@ -143,17 +143,14 @@ class ProgramConfig:
     # the relevant criteria (e.g., cap Product/MVP at 4 for Alchemist).
     requires_pitch_deck: bool = False
     # Per-program sheet-geometry defaults, used by Config.from_env when the
-    # corresponding env var is unset. Fellowship and R2B sheets have a merged
-    # top-label row above the per-column header row (header_row=2,
-    # top_label_row=1). Fellowship V2's sheet has column names on row 1 and
-    # sub-headers on row 2 (header_row=1, top_label_row=0 — no separate label
-    # row, so output columns are resolved from the header row itself).
+    # corresponding env var is unset. The Fellowship V2 and R2B sheets carry
+    # a merged top-label row above the per-column header row (header_row=2,
+    # top_label_row=1, so applicant data starts on row 3). Alchemist's tab
+    # has the column names on row 1 with no separate label row
+    # (header_row=1, top_label_row=0 — output columns are then resolved
+    # from the header row itself).
     default_header_row: int = 2
     default_top_label_row: int = 1
-    # Number of rows AFTER the header row to skip before real data begins.
-    # Fellowship/R2B: 0 (data starts immediately after the header row).
-    # Fellowship V2: 1 (row 2 is a sub-header row; real data starts at row 3).
-    data_start_offset: int = 0
     # Optional override for the sheet column that holds the applicant/
     # startup's name — used by pipeline.py for no-show detection (a human
     # types a marker like "won't pitch" directly into this cell), R2B's
@@ -251,10 +248,8 @@ FELLOWSHIP_V2_CONFIG = ProgramConfig(
     # row 2 = actual column headers (question text), row 3+ = applicant data.
     # header_row=2 so column names come from row 2.
     # top_label_row=1 so output column lookup finds AI/AI_Reasoning on row 1.
-    # data_start_offset=0 because data starts immediately after header row 2.
     default_header_row=2,
     default_top_label_row=1,
-    data_start_offset=0,
     excluded_header_substrings=("ception",),
     excluded_header_names=frozenset({"", "AI", "AI_Reasoning", "AI Reasoning", "Total"}),
 )
@@ -367,7 +362,6 @@ ALCHEMIST_CONFIG = ProgramConfig(
     # no top label row. Data starts from row 2.
     default_header_row=1,
     default_top_label_row=0,
-    data_start_offset=0,
     excluded_header_substrings=(
         "timestamp", "email", "phone", "telegram", "whatsapp",
         "ceo", "visa", "delaware", "incorporated", "registered",

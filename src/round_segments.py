@@ -1,6 +1,6 @@
 """Pure segment logic for operator-entered round-video segment timestamps.
 
-No I/O here — timestamp parsing/formatting and structural validation of a
+No I/O here — timestamp parsing and structural validation of a
 segment list. An operator types each startup's Segment Start/End into the
 sheet by hand; the grading pipeline's virtual-clip input assembly
 (src/pipeline.py's _read_segment_bounds) reads them from there. There is
@@ -38,11 +38,3 @@ def parse_timestamp(text: str) -> int:
         raise SegmentValidationError(f"Out-of-range minutes/seconds: {text!r}")
     return hours * 3600 + minutes * 60 + seconds
 
-
-def seconds_to_timestamp(total: int) -> str:
-    """192 -> '3:12'; 3768 -> '1:02:48' (inverse of parse_timestamp)."""
-    hours, rest = divmod(total, 3600)
-    minutes, seconds = divmod(rest, 60)
-    if hours:
-        return f"{hours}:{minutes:02d}:{seconds:02d}"
-    return f"{minutes}:{seconds:02d}"
