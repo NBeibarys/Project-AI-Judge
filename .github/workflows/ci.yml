@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # Cheap syntax gate first: fails in seconds if anything is
+      # unparseable, before spending time on the dependency install.
+      - name: Byte-compile every module
+        run: python -m compileall -q src app.py scripts tests
+
+      - name: Install ruff
+        run: python -m pip install --disable-pip-version-check "ruff==0.16.6"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      # The tests import src.pipeline, which imports google-adk at module
+      # load, so the runtime dependencies are genuinely required here.
+      - name: Install runtime dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
