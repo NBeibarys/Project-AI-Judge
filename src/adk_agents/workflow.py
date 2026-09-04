@@ -417,6 +417,19 @@ class AdkReviewWorkflow:
             if vals:
                 avg_criterion_scores[criterion] = round(sum(vals) / len(vals), 2)
 
+        if not avg_criterion_scores:
+            # No sample matched this program's rubric criteria (schema/
+            # config drift) — same terminal state as all samples failing.
+            return {
+                "score": None,
+                "reasoning": (
+                    "No Head sample produced scores matching this "
+                    "program's rubric criteria. Manual review required."
+                ),
+                "confidence": "n/a",
+                "human_review_flag": True,
+            }
+
         avg_final = round(
             sum(avg_criterion_scores.values()) / len(avg_criterion_scores)
         )
