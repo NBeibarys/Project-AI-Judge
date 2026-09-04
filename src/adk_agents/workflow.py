@@ -42,8 +42,6 @@ from .agent import build_head_agent, build_root_agent
 from .schemas import HEAD_SCHEMA_BY_PROGRAM
 from ..programs import ProgramConfig
 
-APP_NAME = "fellowship_review"
-
 # One persistent event loop per worker thread, reused across every row that
 # thread processes — not a new asyncio.run() per row. pipeline.py's
 # run_batch() processes many rows concurrently via ThreadPoolExecutor;
@@ -144,6 +142,10 @@ class AdkReviewWorkflow:
         # Head model defaults to the grader model (same model, temp=0).
         self.head_model = head_model or grader_model
         self.n_samples = max(1, n_samples)
+        # Session/app name per program: ADK keys InMemorySessionService
+        # sessions by it. Previously a module constant naming one program
+        # while all three ran through this workflow.
+        self.app_name = f"{self.program_config.program}_grading"
 
     # ------------------------------------------------------------------
     # Shared helpers
@@ -250,7 +252,7 @@ class AdkReviewWorkflow:
         """
         session_service = InMemorySessionService()
         runner = Runner(
-            app_name=APP_NAME,
+            app_name=self.app_name,
             agent=build_root_agent(
                 self.analyzer_model,
                 self.grader_model,
@@ -268,7 +270,7 @@ class AdkReviewWorkflow:
             "evidence_approved": False,
         }
         await session_service.create_session(
-            app_name=APP_NAME,
+            app_name=self.app_name,
             user_id=user_id,
             session_id=session_id,
             state=initial_state,
@@ -282,7 +284,7 @@ class AdkReviewWorkflow:
         ):
             pass
         session = await session_service.get_session(
-            app_name=APP_NAME,
+            app_name=self.app_name,
             user_id=user_id,
             session_id=session_id,
         )
@@ -301,7 +303,7 @@ class AdkReviewWorkflow:
         """
         session_service = InMemorySessionService()
         runner = Runner(
-            app_name=APP_NAME,
+            app_name=self.app_name,
             agent=build_head_agent(self.head_model, self.program_config),
             session_service=session_service,
         )
@@ -312,7 +314,7 @@ class AdkReviewWorkflow:
         # template ({analyst_report}) resolves to the approved evidence.
         initial_state: dict = {"analyst_report": approved_evidence}
         await session_service.create_session(
-            app_name=APP_NAME,
+            app_name=self.app_name,
             user_id=user_id,
             session_id=session_id,
             state=initial_state,
@@ -332,7 +334,7 @@ class AdkReviewWorkflow:
         ):
             pass
         session = await session_service.get_session(
-            app_name=APP_NAME,
+            app_name=self.app_name,
             user_id=user_id,
             session_id=session_id,
         )
