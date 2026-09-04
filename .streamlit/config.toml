@@ -1,0 +1,5 @@
+# The dashboard is a single-operator tool with no authentication of its
+# own, and it renders applicant data. Binding to loopback keeps it off the
+# network; reach it from another machine over an SSH tunnel.
+[server]
+address = "127.0.0.1"
