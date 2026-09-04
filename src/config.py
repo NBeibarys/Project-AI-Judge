@@ -16,6 +16,7 @@ multi-provider experiments are recorded in the private development
 archive, not this repository.
 """
 import dataclasses
+import hashlib
 import os
 from dataclasses import dataclass
 
@@ -257,7 +258,6 @@ class Config:
         # forget/misconfigure); several inconsistent, conflicting
         # checkpoint_alchemist*.json files accumulated in /tmp as a result,
         # which is why they were deleted rather than migrated.
-        import hashlib
         sheet_hash = hashlib.sha1(sheet_id.encode()).hexdigest()[:10]
         # program_config.program, not the raw argument: get_program_config
         # normalizes case and whitespace, so PROGRAM="R2B " and "r2b" must

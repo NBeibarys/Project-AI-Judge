@@ -45,8 +45,11 @@ duration probing, size-targeted recompression); they are invoked as
 subprocesses and are not Python dependencies.
 """
 import io
+import json
 import os
 import re
+import subprocess
+import tempfile
 import time
 from typing import Optional
 from urllib.parse import urlparse
@@ -174,8 +177,6 @@ def _transcode_to_mp4(data: bytes) -> bytes:
     re-encoding to the most universally-supported codec pair is more
     reliable than trying to detect and special-case source codecs.
     """
-    import subprocess
-
     proc = subprocess.run(
         [
             "ffmpeg", "-y",
@@ -212,9 +213,6 @@ def _shrink_video_to_fit(data: bytes, max_bytes: int) -> bytes:
     constraint actually requires. Runs entirely via ffmpeg/ffprobe
     stdin/stdout pipes — nothing touches disk.
     """
-    import json
-    import subprocess
-
     probe = subprocess.run(
         [
             "ffprobe", "-v", "error",
@@ -276,8 +274,6 @@ def _shrink_video_to_fit(data: bytes, max_bytes: int) -> bytes:
     # -analyzeduration/-probesize scan buffers; the encoder gets no such
     # luxury. Output stays a pipe — frag_keyframe+empty_moov exists
     # precisely to make the OUTPUT writable without seeking.
-    import tempfile
-
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as src_file:
         src_file.write(data)
         src_path = src_file.name

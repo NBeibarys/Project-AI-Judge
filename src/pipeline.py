@@ -17,6 +17,7 @@ import json
 import re
 import threading
 import unicodedata
+from collections import Counter
 from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from urllib.parse import urlparse
@@ -128,7 +129,6 @@ def _find_duplicate_emails(header: list, rows: list) -> frozenset:
     unchanged for the (much more common) non-colliding case — so this
     fix doesn't invalidate checkpoint entries for every already-graded row.
     """
-    from collections import Counter
     emails = []
     for row in rows:
         for i, col in enumerate(header):
