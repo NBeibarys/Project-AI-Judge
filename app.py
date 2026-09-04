@@ -21,7 +21,7 @@ import time
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
-from streamlit.runtime.scriptrunner_utils.exceptions import StopException
+from streamlit.runtime.scriptrunner_utils.exceptions import ScriptControlException
 
 _REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_REPO_DIR, ".env"), override=True)
@@ -481,13 +481,17 @@ if run_clicked or test_row_clicked:
                 break
             time.sleep(0.5)
         worker_thread.join(timeout=5)
-    except StopException:
-        # The Stop button was clicked. Set the cooperative flag every
-        # process_row call checks, and cancel every in-flight Gemini/ADK
-        # asyncio Task directly (the near-instant path — a row could
-        # otherwise be minutes deep into a single Gemini call with no other
-        # checkpoint to notice cancel_event). Then wait briefly for the
-        # background thread to unwind before reporting back.
+    except ScriptControlException:
+        # Stop or a rerun (a widget interaction, or Streamlit's "Rerun"):
+        # StopException and RerunException both subclass this, and both
+        # abandon this poll loop, leaving the batch running with nobody
+        # reading `shared` — so both must cancel the run rather than
+        # orphan it. Set the cooperative flag every process_row call
+        # checks, and cancel every in-flight Gemini/ADK asyncio Task
+        # directly (the near-instant path — a row could otherwise be
+        # minutes deep into a single Gemini call with no other checkpoint
+        # to notice cancel_event). Then wait briefly for the background
+        # thread to unwind before reporting back.
         cancel_event.set()
         cancel_all_active()
         worker_thread.join(timeout=5)
