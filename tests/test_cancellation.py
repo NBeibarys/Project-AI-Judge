@@ -102,6 +102,25 @@ class CancelAllActiveTests(unittest.TestCase):
         with workflow_module._active_lock:
             self.assertEqual(workflow_module._active_tasks, {})
 
+    def test_cancel_all_active_survives_a_closed_loop(self) -> None:
+        # A worker thread that already exited can leave a closed loop in the
+        # registry; cancelling it raises RuntimeError, which must not stop
+        # the sweep from reaching the rows that are still running.
+        closed_loop, closed_task = MagicMock(), MagicMock()
+        closed_loop.call_soon_threadsafe.side_effect = RuntimeError(
+            "Event loop is closed"
+        )
+        live_loop, live_task = MagicMock(), MagicMock()
+        with workflow_module._active_lock:
+            workflow_module._active_tasks["row_closed"] = (closed_loop, closed_task)
+            workflow_module._active_tasks["row_live"] = (live_loop, live_task)
+
+        workflow_module.cancel_all_active()
+
+        live_loop.call_soon_threadsafe.assert_called_once_with(live_task.cancel)
+        with workflow_module._active_lock:
+            self.assertEqual(workflow_module._active_tasks, {})
+
     def test_cancel_all_active_is_a_no_op_when_nothing_registered(self) -> None:
         # Should not raise even with an empty registry.
         workflow_module.cancel_all_active()

@@ -90,7 +90,13 @@ def cancel_all_active() -> None:
         entries = list(_active_tasks.values())
         _active_tasks.clear()
     for loop, task in entries:
-        loop.call_soon_threadsafe(task.cancel)
+        try:
+            loop.call_soon_threadsafe(task.cancel)
+        except RuntimeError:
+            # A dead worker thread's loop can already be closed (nothing
+            # closes them explicitly; GC does), and that one bad entry must
+            # not abort cancellation for every row still actually running.
+            continue
 
 
 # Cap LLM calls per sample:
