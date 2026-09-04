@@ -709,11 +709,9 @@ def _extract_chart_images(data: bytes) -> list[tuple[bytes, str]]:
     import fitz
     from PIL import Image
 
-    # Pitch-deck PDFs are applicant-supplied, and Pillow only WARNS between
-    # its default MAX_IMAGE_PIXELS and twice that, so a decompression-bomb
-    # image decodes silently at ~1GB peak per row (times MAX_CONCURRENCY).
-    # Set here rather than at module scope so importing this module never
-    # changes Pillow's behaviour for the rest of the Streamlit host.
+    # Same cap, same reason as _compress_pdf above; set inside the
+    # function so importing this module never changes Pillow's behaviour
+    # for the rest of the Streamlit host.
     Image.MAX_IMAGE_PIXELS = 40_000_000
 
     results: list[tuple[bytes, str]] = []

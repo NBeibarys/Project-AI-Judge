@@ -56,7 +56,7 @@ def _range_start_row(sheet_range: str) -> int | None:
     if "!" not in sheet_range and ":" not in sheet_range:
         return None
     start = sheet_range.split("!")[-1].split(":")[0]
-    match = re.fullmatch(r"[A-Za-z]+(\d+)?", start)
+    match = re.fullmatch(r"[A-Za-z]*(\d+)?", start)
     return int(match.group(1)) if match and match.group(1) else None
 
 

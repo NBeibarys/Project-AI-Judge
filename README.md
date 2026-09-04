@@ -257,7 +257,7 @@ prompt or config change.
 python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-47 tests, all offline: no network, no Sheets, no model calls. They cover the
+48 tests, all offline: no network, no Sheets, no model calls. They cover the
 deterministic core: timestamp parsing and segment bounds, YouTube URL
 canonicalization, no-show detection, schema field ordering and head-output
 conversion, the cancellation paths including a regression test for the

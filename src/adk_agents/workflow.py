@@ -111,8 +111,9 @@ def cancel_all_active() -> None:
 #   unbounded.
 #   Head: 1 LLM call per run × N_SAMPLES. MAX_LLM_CALLS_HEAD is 2, not 1:
 #   the cap is a safety ceiling, and a sample that hits it is excluded
-#   from the average by _run_sample (not lost), so one slot of headroom
-#   costs nothing while making an unexpected extra call non-fatal.
+#   from the average by _run_sample (the row survives; only that sample
+#   is dropped), so one slot of headroom costs nothing while making an
+#   unexpected extra call non-fatal.
 MAX_LLM_CALLS_VERIFY = 20
 MAX_LLM_CALLS_HEAD = 2
 

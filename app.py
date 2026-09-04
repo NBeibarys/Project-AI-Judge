@@ -31,7 +31,7 @@ if _REPO_DIR not in sys.path:
 
 from src.adk_agents import cancel_all_active
 from src.checkpoint import Checkpoint
-from src.config import Config
+from src.config import Config, _env, _env_int
 from src.google_clients import get_sheets_service, read_sheet_rows
 from src.pipeline import (
     _derive_row_id,
@@ -59,21 +59,17 @@ with st.sidebar:
     )
     _program_config = get_program_config(program)
     _default_sheet_id = os.environ.get(_program_config.sheet_id_env, "")
-    _default_sheet_range = os.environ.get(
+    _default_sheet_range = _env(
         _program_config.sheet_range_env,
         DEFAULT_SHEET_RANGE,
     )
-    _default_header_row = int(
-        os.environ.get(
-            _program_config.header_row_env,
-            str(_program_config.default_header_row),
-        )
+    _default_header_row = _env_int(
+        _program_config.header_row_env,
+        _program_config.default_header_row,
     )
-    _default_top_label_row = int(
-        os.environ.get(
-            _program_config.top_label_row_env,
-            str(_program_config.default_top_label_row),
-        )
+    _default_top_label_row = _env_int(
+        _program_config.top_label_row_env,
+        _program_config.default_top_label_row,
     )
 
     sheet_id_input = st.text_input(
@@ -411,15 +407,16 @@ if run_clicked or test_row_clicked:
 
     # run_batch runs on a background thread instead of blocking this script
     # thread directly. Why: Streamlit's Stop button is purely cooperative —
-    # a pending stop request is only checked and raised (StopException) when
-    # the script itself makes an st.* call (each is the only kind of
-    # "yield point" the script runner checks). A direct, blocking run_batch
-    # call makes zero st.* calls of its own, so Stop could never fire at
-    # all for a single-row test grade, and for a multi-row batch could only
-    # fire between completed rows. Running it on its own thread lets this
-    # (main, script) thread poll on a short interval and call real st.*
-    # methods every ~0.5s — genuine yield points — while the batch is still
-    # in flight, so Stop actually has somewhere to interrupt.
+    # a pending stop or rerun request is only checked and raised (as a
+    # ScriptControlException) when the script itself makes an st.* call
+    # (each is the only kind of "yield point" the script runner checks).
+    # A direct, blocking run_batch call makes zero st.* calls of its own,
+    # so Stop could never fire at all for a single-row test grade, and for
+    # a multi-row batch could only fire between completed rows. Running it
+    # on its own thread lets this (main, script) thread poll on a short
+    # interval and call real st.* methods every ~0.5s — genuine yield
+    # points — while the batch is still in flight, so Stop actually has
+    # somewhere to interrupt.
     #
     # cancel_event/`shared` cross the thread boundary deliberately: the
     # background thread NEVER calls any st.* function itself (unsupported/

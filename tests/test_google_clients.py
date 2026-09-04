@@ -85,6 +85,10 @@ class SheetRangeAnchorTests(unittest.TestCase):
 
         service.spreadsheets.assert_not_called()
 
+    def test_rejects_a_row_only_range(self) -> None:
+        with self.assertRaises(ValueError):
+            read_sheet_rows(MagicMock(), "sheet-id", "Sheet1!2:5")
+
 
 class EscalationWriteTests(unittest.TestCase):
     """A human-review escalation must not blank a grade the row already
