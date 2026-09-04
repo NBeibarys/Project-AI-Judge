@@ -22,6 +22,33 @@ from dataclasses import dataclass
 from .programs import ProgramConfig, get_program_config
 
 
+def _env(name: str, default: str) -> str:
+    """Read an env var, treating a set-but-empty value as unset.
+
+    .env.example ships several settings as bare ``NAME=`` placeholders and
+    dotenv loads those as empty strings, so a plain ``os.environ.get(name,
+    default)`` hands the rest of this module an empty model name or sheet
+    range instead of the documented default. Surrounding whitespace is
+    stripped for the same reason: a stray space in a copy-pasted value is
+    an operator typo, never a meaningful setting.
+    """
+    return os.environ.get(name, "").strip() or default
+
+
+def _env_int(name: str, default: int) -> int:
+    """_env for integer settings, naming the variable in the error.
+
+    Bare ``int("")`` raises "invalid literal for int() with base 10: ''",
+    which tells an operator nothing about which of the several
+    sheet-geometry variables they left half-filled.
+    """
+    raw = _env(name, str(default))
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer, got {raw!r}.") from exc
+
+
 @dataclass(frozen=True)
 class Config:
     sheet_id: str
@@ -198,17 +225,17 @@ class Config:
         # HEAD_MODEL defaulting to GRADER_MODEL is an intentional, documented
         # choice (workflow.py: "Head model defaults to the grader model"),
         # not a hidden fallback — both are already known-explicit by here.
-        head_model = os.environ.get("HEAD_MODEL", grader_model)
+        head_model = _env("HEAD_MODEL", grader_model)
 
-        sheet_range = sheet_range_override or os.environ.get(
+        sheet_range = sheet_range_override or _env(
             program_config.sheet_range_env, "Grading Final",
         )
         header_row = (
             header_row_override
             if header_row_override is not None
-            else int(os.environ.get(
-                program_config.header_row_env, str(program_config.default_header_row),
-            ))
+            else _env_int(
+                program_config.header_row_env, program_config.default_header_row,
+            )
         )
 
         # Checkpoint is scoped per (program, sheet_id) — a single shared
@@ -232,7 +259,11 @@ class Config:
         # which is why they were deleted rather than migrated.
         import hashlib
         sheet_hash = hashlib.sha1(sheet_id.encode()).hexdigest()[:10]
-        checkpoint_path = f"checkpoint_{program}_{sheet_hash}.json"
+        # program_config.program, not the raw argument: get_program_config
+        # normalizes case and whitespace, so PROGRAM="R2B " and "r2b" must
+        # not end up with two checkpoint files for the same sheet (the
+        # second run would silently re-grade every row at full API cost).
+        checkpoint_path = f"checkpoint_{program_config.program}_{sheet_hash}.json"
 
         return cls(
             sheet_id=sheet_id,
@@ -241,20 +272,21 @@ class Config:
             top_label_row=(
                 top_label_row_override
                 if top_label_row_override is not None
-                else int(os.environ.get(
-                    program_config.top_label_row_env, str(program_config.default_top_label_row),
-                ))
+                else _env_int(
+                    program_config.top_label_row_env,
+                    program_config.default_top_label_row,
+                )
             ),
             service_account_path=sa_path,
             analyzer_model=analyzer_model,
             grader_model=grader_model,
             head_model=head_model,
-            n_samples=int(os.environ.get("N_SAMPLES", "3")),
+            n_samples=_env_int("N_SAMPLES", 3),
             # 3, not 8: 8 caused sustained 429s in a real 100-row run
             # (69/100 rows failed) — see .env.example's MAX_CONCURRENCY note.
             # The default must be the value proven safe in production, since
             # an operator who never sets the var gets exactly this one.
-            max_concurrency=int(os.environ.get("MAX_CONCURRENCY", "3")),
+            max_concurrency=_env_int("MAX_CONCURRENCY", 3),
             checkpoint_path=checkpoint_path,
             program_config=program_config,
         )
