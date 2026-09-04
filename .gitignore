@@ -1,6 +1,5 @@
 # Local secrets and credentials.
 .env
-client_hub_credentials.json
 *service-account*.json
 service_account*.json
 *_service_account*.json
@@ -8,9 +7,15 @@ service_account*.json
 
 # Applicant data and local processing state.
 *.xlsx
+*.csv
 checkpoint.json
 checkpoint_*.json
-.fellowship_work/
+checkpoint_*.tmp
+batch_results_*
+regrade_*
+repro_*
+service.yaml
+.hermes/
 
 # Python-generated files.
 __pycache__/
@@ -25,7 +30,6 @@ htmlcov/
 .claude/
 .superpowers/
 docs/superpowers/
-.gstack/
 
 # Operating-system and editor noise.
 .DS_Store
