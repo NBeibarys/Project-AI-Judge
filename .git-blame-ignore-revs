@@ -1,0 +1,4 @@
+# Ignore the whole-tree formatting commit in git blame.
+# GitHub's blame UI honors this file automatically; locally run:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+0290bf47d5fb37841c961298bb4b4c2ac6d5038a
