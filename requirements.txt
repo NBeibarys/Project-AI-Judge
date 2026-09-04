@@ -3,6 +3,11 @@ google-adk==2.3.0
 google-genai==2.10.0
 google-api-python-client==2.198.0
 google-auth==2.55.0
+# Imported directly by video_ingestion.py's _drive_service to build an
+# httplib2.Http with a timeout; satisfied only transitively today, pinned
+# here so an upstream change cannot silently remove them.
+google-auth-httplib2==0.4.0
+httplib2==0.32.0
 certifi==2026.2.25
 pydantic==2.13.4
 python-dotenv==1.2.2
