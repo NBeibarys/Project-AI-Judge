@@ -190,8 +190,9 @@ class R2BApprovalGate(BaseAgent):
             # false/fabricated/materially misleading claim. This can't be
             # fixed by another analyst revision, so it exits the loop
             # immediately (even on attempt 1) with a definitive 0 — not the
-            # generic "rejected 3 times, score: None" escalation, which
-            # left these rows stuck in human-review limbo with no score.
+            # generic "rejected up to the iteration cap, score: None"
+            # escalation, which left these rows stuck in human-review limbo
+            # with no score.
             issue_type = verdict.get("disqualifying_issue_type", "none")
             issue_reason = verdict.get("disqualifying_issue_reason", "")
             delta["evidence_approved"] = False
@@ -209,8 +210,8 @@ class R2BApprovalGate(BaseAgent):
             delta["final_result"] = {
                 "score": None,
                 "reasoning": (
-                    "Analyst evidence was rejected 3 times. Last grader "
-                    f"feedback: {verdict.get('feedback', '')}"
+                    f"Analyst evidence was rejected {self.max_iterations} "
+                    f"times. Last grader feedback: {verdict.get('feedback', '')}"
                 ),
                 "confidence": "n/a",
             }
