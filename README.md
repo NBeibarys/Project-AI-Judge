@@ -220,9 +220,10 @@ with its email as an Editor, and share any Drive-hosted videos or decks with
 the same email. Model access is either Vertex AI (`GOOGLE_GENAI_USE_VERTEXAI=TRUE`
 plus `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`) or the Gemini Developer
 API (`GOOGLE_API_KEY`); the backends genuinely differ (Files API and tool-config
-handling versus inline bytes). Production runs Vertex AI with
-gemini-3.5-flash in all three roles, a cost and reliability tradeoff
-documented in `.env.example`.
+handling versus inline bytes). The reference configuration in `.env.example`
+uses gemini-3.5-flash for all three roles; production has also run the
+cheaper gemini-3.5-flash-lite tier, whose lower reliability is documented
+there and is what the verify loop and multi-sample averaging mitigate.
 
 Required, no defaults; each raises at startup if unset:
 
