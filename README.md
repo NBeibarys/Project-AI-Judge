@@ -1,16 +1,18 @@
-# ai-judge
+# AI Judge
 
-A multi-agent grading pipeline for startup and fellowship applications that live
-in Google Sheets. It reads a sheet, pulls each applicant's pitch video and pitch
-deck, runs a three-role Gemini workflow over them (an analyst that only gathers
-evidence, a grader that only verifies it, a head reviewer that only scores it),
-samples the scorer to damp run-to-run variance, and writes scores and rationale
-back into the same sheet. It has processed 400+ real applications across three
-programs since July 2026, and most of the code that looks unusual is there
-because of something that broke on a real batch.
+[Road to Battlefield](https://road2battlefield.com), the official Central Eurasian qualifier for TechCrunch Startup Battlefield, is run by [Silkroad Innovation Hub](https://silkroadinnovationhub.com), a San Francisco hub bridging Central Eurasia and Silicon Valley. Startup Battlefield, [the world's most iconic startup pitch competition](https://techcrunch.com/startup-battlefield/about/), counts Dropbox, Discord, Fitbit, Trello, and Cloudflare among its alumni; 200 startups compete at Disrupt SF for a $100K prize. TechCrunch called the 2025 Road to Battlefield ["Central Eurasia's largest startup competition in history"](https://techcrunch.com/2025/08/25/road-to-battlefield-central-eurasias-largest-startup-competition-in-history-sends-four-winners-to-techcrunch-startup-battlefield), which sent four winners to Startup Battlefield; [the 2026 edition drew 726 applications from 39 countries](https://techcrunch.com/2026/08/12/silkroad-innovation-hubs-road-to-battlefield-competition-continues/).
 
-This is a production system, not a demo: real applicants, real decisions, and
-a standing bias toward escalating to a human reviewer over silently guessing.
+AI Judge graded the Road to Battlefield finals live: pitches recorded during the event were uploaded and scored the same day, while the human judges deliberated. Since July 2026 it has graded 400+ real applications across three programs: Road to Battlefield, the Silkroad Fellowship, and the [Alchemist Silicon Valley Residency](https://alchemistsvr.com). Each application runs through a three-role Gemini workflow over pitch videos and decks: an analyst that gathers evidence and cannot score, a grader that verifies and cannot score, and a head that scores approved evidence only, sampled three times to damp run-to-run variance, with scores and rationale written back into the same Google Sheet.
+
+This is a production system, not a demo: real applicants, real decisions, and a standing bias toward escalating to a human reviewer over silently guessing. Most of the code that looks unusual is there because of something that broke on a real batch.
+
+## Dashboard
+
+`app.py` is a Streamlit operator console: pick the program, then point that session at any sheet, tab and header row and map which columns hold the score, the reasoning and the applicant name. Run a single row as a test or a whole batch with live progress, and choose which columns are withheld from the model. Stop is real: it cancels in-flight model calls at the asyncio task level instead of waiting out the batch.
+
+![Grading dashboard](assets/dashboard.png)
+
+*Scores and rationale write back into the same Google Sheet the applications live in.*
 
 ## Highlights
 
@@ -65,6 +67,21 @@ flowchart TD
     write --> cp["Checkpoint after the write succeeds"]
 ```
 
+## Programs
+
+All three share the architecture and differ in rubric, source priority, and
+sheet shape.
+
+| Program | Criteria | Bands | Primary source | Deck | Sheet output |
+|---|---|---|---|---|---|
+| `fellowship_v2` | 9 | 1-2 / 3-4 / 5-6 / 7-8 / 9-10 | video | no | score and reasoning columns |
+| `r2b` | 6 | 1-3 / 4-6 / 7-10 | video only | no | one column per criterion, total, notes |
+| `alchemist` | 4 | 1-2 / 3-4 / 5-6 / 7-8 / 9-10 | deck and text | required | score and reasoning columns |
+
+Every program runs at most two analyst-grader rounds, keeps the head on text
+evidence only, and leaves auto-zero off. One process run grades exactly one
+program.
+
 ## The judging design
 
 The pipeline is built around one idea: an LLM that gathers evidence, judges its
@@ -95,21 +112,6 @@ current status, "250+" versus "300+"). Today a surviving inconsistency lowers
 the specific criteria where the conflicting claims live, is quoted in those
 criteria's rationale, and flags the row for human review. Zeroing is a human
 decision. Auto-zero remains a per-program flag, currently off everywhere.
-
-## Programs
-
-All three share the architecture and differ in rubric, source priority, and
-sheet shape.
-
-| Program | Criteria | Bands | Primary source | Deck | Sheet output |
-|---|---|---|---|---|---|
-| `fellowship_v2` | 9 | 1-2 / 3-4 / 5-6 / 7-8 / 9-10 | video | no | score and reasoning columns |
-| `r2b` | 6 | 1-3 / 4-6 / 7-10 | video only | no | one column per criterion, total, notes |
-| `alchemist` | 4 | 1-2 / 3-4 / 5-6 / 7-8 / 9-10 | deck and text | required | score and reasoning columns |
-
-Every program runs at most two analyst-grader rounds, keeps the head on text
-evidence only, and leaves auto-zero off. One process run grades exactly one
-program.
 
 ## Production hardening
 
@@ -197,17 +199,6 @@ publication cleanup should carry):
 - A corrupt checkpoint file crashes the batch rather than recovering.
 - No logging: best-effort paths degrade silently.
 
-## Dashboard
-
-`app.py` is a Streamlit operator console: pick the program, point it at any
-sheet, tab and header row, map which columns hold the score, the reasoning and
-the applicant name, choose which columns are hidden from the model, run a batch
-or a single row, and stop a run mid-flight (which cancels in-flight model calls
-rather than waiting them out). It binds to loopback and has no authentication:
-remote access means an SSH tunnel. The binding is pinned in two places, so
-neither launch path can widen it by accident: `.streamlit/config.toml` sets
-`server.address = "127.0.0.1"`, and `run_app.sh` passes the same flag.
-
 ## Setup
 
 Requires Python 3.12 and the ffmpeg and ffprobe binaries on PATH: the ingestion
@@ -246,6 +237,11 @@ Optional: `HEAD_MODEL` (defaults to `GRADER_MODEL`), `N_SAMPLES`,
 checkpoint-path variable: each run derives
 `checkpoint_{program}_{sheet_hash}.json`.
 
+The dashboard has no authentication, so its loopback binding is pinned in two
+places and neither launch path can widen it by accident: `.streamlit/config.toml`
+sets `server.address = "127.0.0.1"`, and `run_app.sh` passes the same flag.
+Remote access means an SSH tunnel.
+
 ## Running
 
 ```bash
@@ -277,32 +273,25 @@ which is honest but not a substitute for tests.
 
 ## Development history
 
-The commit history is preserved back to June 2026. Operational files
+The commit history is preserved back to June 2026; operational files
 (deployment configs, result dumps, internal planning documents) were stripped
-from history before publication; the private development archive retains them.
-The arc, with reasons the log alone does not show:
+before publication, and the private archive that retains them stays private
+because early revisions contain applicant data. What the log alone does not
+show is which decisions production reversed:
 
-- 2026-06-27: initial multimodal fellowship review on Google ADK.
-- 2026-07-06: R2B and Alchemist programs added; a 4-agent web-verifier
-  pipeline tried and removed the same day; Cloud Run deployment added.
-- 2026-07-07: switched to the Gemini Developer API, then made both backends
-  first-class; production runs on Vertex AI today, and the model-aware tool
-  config and schema fixes remain.
-- 2026-07-10 to 07-11: R2B video-only grading with one sheet column per
-  criterion; internal-contradiction auto-zero added 07-11 and reversed 07-12
-  after 7 of 7 live auto-zeros proved false.
-- 2026-07-15: round indexing and server-side YouTube segment clipping; the
-  automatic timestamp proposer later removed in favor of operator-entered
-  boundaries.
-- 2026-07-17: Cloud Run deployment files removed.
-- 2026-07-20: R2B rows with no video link are skipped outright instead of
-  being graded as "no video submitted".
-- 2026-07-21: Alchemist and Fellowship V2 aligned to R2B's tuning (media-less
-  head, priced contradictions, 2-iteration verify cap); dashboard column
-  mapping, single-row test grading, and the kill-in-flight Stop button.
-
-Dates and pivot reasons come from the private development archive, which stays
-private because early revisions contain applicant data.
+- **Auto-zero on internal contradictions**, added 2026-07-11 and reversed
+  07-12: 7 of 7 live auto-zeros were false positives (currency conversion,
+  rounding, MRR versus sales, roadmap versus current status, "250+" versus
+  "300+"). A contradiction now lowers the specific criteria involved and flags
+  the row; zeroing is a human decision.
+- **A 4-agent web-verifier pipeline**, built and removed the same day
+  (2026-07-06).
+- **The automatic segment-timestamp proposer** (2026-07-15), replaced by
+  operator-entered boundaries.
+- **Grading R2B rows with no video link** as "no video submitted", reversed
+  2026-07-20: those rows are skipped outright rather than scored on absent
+  evidence.
+- **The Cloud Run deployment**, added 2026-07-06 and removed 07-17.
 
 ## Repository layout
 
@@ -319,6 +308,7 @@ src/video_ingestion.py    Tier-2 download, transcode, deck ingestion
 src/adk_agents/           Agents, prompts, schemas, workflow
 src/round_segments.py     Timestamp parsing for virtual clips
 tests/                    Offline unit tests
+assets/                   Dashboard screenshot used by this README
 ```
 
 ## License
