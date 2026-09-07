@@ -1,4 +1,5 @@
-# AI Judge
+# AI Judge<img width="1200" height="900" alt="dashboard-demo" src="https://github.com/user-attachments/assets/c6e5a0ed-5c68-46a6-b05c-0189fb9f8371" />
+
 
 [Road to Battlefield](https://road2battlefield.com), the official Central Eurasian qualifier for TechCrunch Startup Battlefield, is run by [Silkroad Innovation Hub](https://silkroadinnovationhub.com), a San Francisco hub bridging Central Eurasia and Silicon Valley. Startup Battlefield, [the world's most iconic startup pitch competition](https://techcrunch.com/startup-battlefield/about/), counts Dropbox, Discord, Fitbit, Trello, and Cloudflare among its alumni; 200 startups compete at Disrupt SF for a $100K prize. TechCrunch called the 2025 Road to Battlefield ["Central Eurasia's largest startup competition in history"](https://techcrunch.com/2025/08/25/road-to-battlefield-central-eurasias-largest-startup-competition-in-history-sends-four-winners-to-techcrunch-startup-battlefield), which sent four winners to Startup Battlefield; [the 2026 edition drew 726 applications from 39 countries](https://techcrunch.com/2026/08/12/silkroad-innovation-hubs-road-to-battlefield-competition-continues/).
 
@@ -10,7 +11,7 @@ This is a production system, not a demo: real applicants, real decisions, and a 
 
 `app.py` is a Streamlit operator console: pick the program, then point that session at any sheet, tab and header row and map which columns hold the score, the reasoning and the applicant name. Run a single row as a test or a whole batch with live progress, and choose which columns are withheld from the model. Stop is real: it cancels in-flight model calls at the asyncio task level instead of waiting out the batch.
 
-![Grading dashboard](assets/dashboard.png)
+<img width="1200" height="900" alt="dashboard-demo" src="https://github.com/user-attachments/assets/886ca452-17d0-4b3a-be5c-3db9d31836de" />
 
 *Scores and rationale write back into the same Google Sheet the applications live in.*
 
