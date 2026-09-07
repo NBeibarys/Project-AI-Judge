@@ -46,25 +46,25 @@ This is a production system, not a demo: real applicants, real decisions, and a 
 
 ```mermaid
 flowchart TD
-    sheet["Sheet rows"] --> gate{"Skip? (graded, no-show, no video)"}
-    gate -->|yes| skip["Skip, no model call"]
-    gate -->|no| deck{"Deck required?"}
-    deck -->|"missing or unfetchable"| zero["Score 0, human review, no model call"]
-    deck -->|yes| ingest["Ingest deck, pre-read chart slides to text"]
-    deck -->|no| video["Resolve video: Tier 1 URI, else Tier 2 download"]
+    sheet["Sheet rows"] --> gate{"Skip?<br/>graded / no-show<br/>no video"}
+    gate -->|yes| skip["Skip,<br/>no model call"]
+    gate -->|no| deck{"Deck<br/>required?"}
+    deck -->|"missing or<br/>unfetchable"| zero["Score 0,<br/>human review,<br/>no model call"]
+    deck -->|yes| ingest["Ingest deck,<br/>pre-read chart<br/>slides to text"]
+    deck -->|no| video["Resolve video:<br/>Tier 1 URI, else<br/>Tier 2 download"]
     ingest --> video
-    video -->|"unresolvable, no required deck"| human["Human review, no model call"]
-    video -->|"unresolvable, deck already ingested"| analyst["Analyst: extract evidence"]
-    video --> analyst["Analyst: extract evidence"]
-    analyst --> grader{"Grader: verify only"}
-    grader -->|"reject: one revision"| analyst
-    grader -->|approve| head["Head x N_SAMPLES, text evidence only"]
+    video -->|"unresolvable,<br/>no required deck"| human["Human review,<br/>no model call"]
+    video -->|"unresolvable,<br/>deck already ingested"| analyst["Analyst:<br/>extract evidence"]
+    video --> analyst
+    analyst --> grader{"Grader:<br/>verify only"}
+    grader -->|"reject:<br/>one revision"| analyst
+    grader -->|approve| head["Head x N_SAMPLES,<br/>text evidence only"]
     grader -->|"iteration cap"| human
     head -->|"all samples fail"| human
-    head --> avg["Average scores, closest-rationale selection"]
-    avg -.->|"flagged inconsistency: priced in, human review"| human
+    head --> avg["Average scores,<br/>closest-rationale<br/>selection"]
+    avg -.->|"flagged inconsistency:<br/>priced in,<br/>human review"| human
     avg --> write["Sheets write-back"]
-    write --> cp["Checkpoint after the write succeeds"]
+    write --> cp["Checkpoint after<br/>the write succeeds"]
 ```
 
 ## Programs
