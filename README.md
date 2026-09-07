@@ -125,7 +125,7 @@ failed.
   concurrency (`src/adk_agents/workflow.py`).
 - **Concurrency stays low.** Raising it to 8 produced sustained 429s in a real
   100-row run, root-caused to one oversized payload exhausting a trial-tier
-  quota with no contention at all (`.env.example`).
+  quota with no contention at all (`src/config.py`).
 - **Cancellation cannot use `as_completed()`.** A future cancelled straight off
   the executor queue never reaches CANCELLED_AND_NOTIFIED, so no waiter fires
   and the loop blocks forever; the completion loop uses bounded `wait()` plus
@@ -208,8 +208,6 @@ remote access means an SSH tunnel. The binding is pinned in two places, so
 neither launch path can widen it by accident: `.streamlit/config.toml` sets
 `server.address = "127.0.0.1"`, and `run_app.sh` passes the same flag.
 
-![Grading dashboard](docs/img/dashboard.png)
-
 ## Setup
 
 Requires Python 3.12 and the ffmpeg and ffprobe binaries on PATH: the ingestion
@@ -230,8 +228,8 @@ API (`GOOGLE_API_KEY`); the backends genuinely differ (Files API and tool-config
 handling versus inline bytes). The reference configuration in `.env.example`
 uses gemini-3.5-flash for all three roles; production has also run the
 cheaper flash-lite tiers (gemini-3.1-flash-lite, later gemini-3.5-flash-lite),
-whose lower reliability is documented there and is what the verify loop and
-multi-sample averaging mitigate.
+whose lower reliability is documented in `src/config.py` and is what the verify
+loop and multi-sample averaging mitigate.
 
 Required, no defaults; each raises at startup if unset:
 
