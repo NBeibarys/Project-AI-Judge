@@ -5,7 +5,7 @@ in Google Sheets. It reads a sheet, pulls each applicant's pitch video and pitch
 deck, runs a three-role Gemini workflow over them (an analyst that only gathers
 evidence, a grader that only verifies it, a head reviewer that only scores it),
 samples the scorer to damp run-to-run variance, and writes scores and rationale
-back into the same sheet. It has processed 140+ real applications across three
+back into the same sheet. It has processed 400+ real applications across three
 programs since July 2026, and most of the code that looks unusual is there
 because of something that broke on a real batch.
 
