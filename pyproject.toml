@@ -17,10 +17,6 @@ keywords = ["llm-as-a-judge", "google-adk", "gemini", "google-sheets", "multi-ag
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-# Ruff also formats Python snippets embedded in Markdown. The published
-# design notes are records of what was written on the day, so the formatter
-# must leave the code they quote exactly as the author typed it.
-extend-exclude = ["docs/design"]
 
 [tool.ruff.lint]
 # E4/E7/E9 (imports, statements, syntax), F (pyflakes), I (import order),

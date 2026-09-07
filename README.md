@@ -277,14 +277,6 @@ ingestion, and the averaging arithmetic only through its empty-input
 escalation test; the rest was validated against real production sheets,
 which is honest but not a substitute for tests.
 
-## Design notes
-
-- [R2B video-only grading](docs/design/2026-07-10-r2b-video-only-grading-design.md)
-- [Kill in-flight grading](docs/design/2026-07-21-kill-in-flight-grading-design.md)
-
-Both carry a status header noting which of their decisions the code later
-reversed.
-
 ## Development history
 
 The commit history is preserved back to June 2026. Operational files
@@ -329,7 +321,6 @@ src/video_ingestion.py    Tier-2 download, transcode, deck ingestion
 src/adk_agents/           Agents, prompts, schemas, workflow
 src/round_segments.py     Timestamp parsing for virtual clips
 tests/                    Offline unit tests
-docs/design/              Design notes with status headers
 ```
 
 ## License

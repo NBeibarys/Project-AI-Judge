@@ -1,7 +1,10 @@
 """Kill-in-flight-grading: cooperative cancellation (src/pipeline.py) and
 the asyncio-level cancel path (src/adk_agents/workflow.py).
 
-See docs/design/2026-07-21-kill-in-flight-grading-design.md.
+A Stop click is covered by two mechanisms: process_row re-checks a
+threading.Event at each row checkpoint and raises RowCancelled, and
+workflow.cancel_all_active() cancels each in-flight asyncio task on its own
+loop so a running model call is aborted rather than waited out.
 """
 
 import threading
