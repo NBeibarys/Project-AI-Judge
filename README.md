@@ -2,9 +2,11 @@
 
 [Road to Battlefield](https://road2battlefield.com), the official Central Eurasian qualifier for TechCrunch Startup Battlefield, is run by [Silkroad Innovation Hub](https://silkroadinnovationhub.com), a San Francisco hub bridging Central Eurasia and Silicon Valley. Startup Battlefield, [the world's most iconic startup pitch competition](https://techcrunch.com/startup-battlefield/about/), counts Dropbox, Discord, Fitbit, Trello, and Cloudflare among its alumni; 200 startups compete at Disrupt SF for a $100K prize. TechCrunch called the 2025 Road to Battlefield ["Central Eurasia's largest startup competition in history"](https://techcrunch.com/2025/08/25/road-to-battlefield-central-eurasias-largest-startup-competition-in-history-sends-four-winners-to-techcrunch-startup-battlefield), which sent four winners to Startup Battlefield; [the 2026 edition drew 726 applications from 39 countries](https://techcrunch.com/2026/08/12/silkroad-innovation-hubs-road-to-battlefield-competition-continues/).
 
-AI Judge graded the Road to Battlefield finals live: pitches recorded during the event were uploaded and scored the same day, while the human judges deliberated. Since July 2026 it has graded 400+ real applications across three programs: Road to Battlefield, the Silkroad Fellowship, and the [Alchemist Silicon Valley Residency](https://alchemistsvr.com). Each application runs through a three-role Gemini workflow over pitch videos and decks: an analyst that gathers evidence and cannot score, a grader that verifies and cannot score, and a head that scores approved evidence only, sampled three times to damp run-to-run variance, with scores and rationale written back into the same Google Sheet.
+AI Judge graded the Road to Battlefield finals live: pitches recorded during the event were uploaded and scored the same day, while the human judges deliberated. Since July 2026 it has graded 400+ real applications across three programs — Road to Battlefield, the Silkroad Fellowship, and the [Alchemist Silicon Valley Residency](https://alchemistsvr.com) — after gating out no-shows and rows missing their required media, which are skipped before any model call. Each application runs through a three-role Gemini workflow over pitch videos and decks: an analyst that gathers evidence and cannot score, a grader that verifies and cannot score, and a head that scores approved evidence only, sampled three times to damp run-to-run variance, with scores and rationale written back into the same Google Sheet.
 
 This is a production system, not a demo: real applicants, real decisions, and a standing bias toward escalating to a human reviewer over silently guessing. Most of the code that looks unusual is there because of something that broke on a real batch.
+
+Built and operated by Beibarys Nyussupov at Silkroad Innovation Hub, 2026.
 
 ## Dashboard
 
@@ -13,6 +15,8 @@ This is a production system, not a demo: real applicants, real decisions, and a 
 ![Dashboard demo: configure columns, run a batch, stop it mid-flight](assets/dashboard-demo.gif)
 
 *Scores and rationale write back into the same Google Sheet the applications live in.*
+
+*Demo recorded against a mocked model layer with fabricated applicants; no real data or API calls.*
 
 ## Highlights
 
@@ -23,8 +27,12 @@ This is a production system, not a demo: real applicants, real decisions, and a 
 - **Self-consistency sampling.** The head runs `N_SAMPLES` times (default 3) at
   temperature 0 on the same approved evidence; criterion scores are averaged
   and the published rationale comes from the run whose final score sits
-  closest to the average (arXiv:2606.26185: temperature 0 alone does not make
-  an LLM judge deterministic).
+  closest to the average. All three roles run at temperature 0, which the
+  LLM-as-judge literature recommends for both evidence extraction and scoring
+  ([arXiv:2603.28304](https://arxiv.org/abs/2603.28304)); temperature 0 alone
+  does not make an LLM judge deterministic
+  ([arXiv:2606.26185](https://arxiv.org/abs/2606.26185)), which is what the
+  sampling is for.
 - **Contracts, not vibes.** Every agent has a Pydantic output schema whose
   criterion fields are required and bounded, so an omitted, renamed, or
   out-of-range criterion fails validation, and field declaration order forces
@@ -41,6 +49,28 @@ This is a production system, not a demo: real applicants, real decisions, and a 
   full round recording into per-startup virtual clips via Gemini video
   offsets: no downloads, no cutting (`src/round_segments.py` parses the
   timestamps, `src/adk_agents/workflow.py` applies the offsets).
+
+## Stack
+
+- **google-adk** — agent harness; the three roles are three agents with
+  separate output schemas, with the analyst-grader revision loop as a
+  `LoopAgent`
+- **google-genai on Vertex AI** — model access; the Gemini Developer API is a
+  first-class second backend, and the code branches where the two genuinely
+  differ (output schema with tools, inline bytes versus URI fetch)
+- **Gemini 3.5 Flash** — the reference configuration for all three roles;
+  temperature 0 everywhere, head sampled `N_SAMPLES` times (default 3). The
+  model names are required environment variables with no code default
+- **Python 3.12, stdlib concurrency** — `ThreadPoolExecutor` workers, one
+  asyncio event loop per thread, no third-party task queue
+- **Pydantic** — agent output contracts: every criterion a required, bounded
+  field, each rationale declared before its score
+- **Streamlit** — operator console, pinned to loopback
+- **ffmpeg / ffprobe** — transcode to MP4, duration probing, budget-driven
+  shrink
+- **unittest** — 48 tests, all offline: no network, no Sheets, no model calls
+- **ruff + GitHub Actions** — lint, format check, and the test suite on every
+  push and pull request
 
 ## How one row is graded
 
@@ -139,7 +169,8 @@ failed.
   fetch caps at 15 MB while inline bytes cap near 95 MB, so ingestion picks
   the path by measured size; image-only deck slides are pre-read to text in
   one bundled call because models read charts reliably in isolation but not
-  inside a large multimodal context (arXiv:2406.11230)
+  inside a large multimodal context
+  ([arXiv:2406.11230](https://arxiv.org/abs/2406.11230))
   (`src/video_ingestion.py`, `src/adk_agents/workflow.py`).
 - **Real sheets are messy.** Checkpoints are scoped per program and per sheet
   after a global path made one program adopt another's rows; the same email
@@ -207,6 +238,8 @@ missing binary surfaces as a mid-batch `FileNotFoundError`, not a startup
 error.
 
 ```bash
+git clone https://github.com/NBeibarys/Project-AI-Judge.git
+cd Project-AI-Judge
 python -m pip install -r requirements.txt
 cp .env.example .env
 ```
