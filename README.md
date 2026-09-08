@@ -2,7 +2,7 @@
 
 [Road to Battlefield](https://road2battlefield.com), the official Central Eurasian qualifier for TechCrunch Startup Battlefield, is run by [Silkroad Innovation Hub](https://silkroadinnovationhub.com), a San Francisco hub bridging Central Eurasia and Silicon Valley. Startup Battlefield, [the world's most iconic startup pitch competition](https://techcrunch.com/startup-battlefield/about/), counts Dropbox, Discord, Fitbit, Trello, and Cloudflare among its alumni; 200 startups compete at Disrupt SF for a $100K prize. TechCrunch called the 2025 Road to Battlefield ["Central Eurasia's largest startup competition in history"](https://techcrunch.com/2025/08/25/road-to-battlefield-central-eurasias-largest-startup-competition-in-history-sends-four-winners-to-techcrunch-startup-battlefield), which sent four winners to Startup Battlefield; [the 2026 edition drew 726 applications from 39 countries](https://techcrunch.com/2026/08/12/silkroad-innovation-hubs-road-to-battlefield-competition-continues/).
 
-AI Judge graded the Road to Battlefield finals live: pitches recorded during the event were uploaded and scored the same day, while the human judges deliberated. Since July 2026 it has graded 400+ real applications across three programs — Road to Battlefield, the Silkroad Fellowship, and the [Alchemist Silicon Valley Residency](https://alchemistsvr.com) — after gating out no-shows and rows missing their required media, which are skipped before any model call. Each application runs through a three-role Gemini workflow over pitch videos and decks: an analyst that gathers evidence and cannot score, a grader that verifies and cannot score, and a head that scores approved evidence only, sampled three times to damp run-to-run variance, with scores and rationale written back into the same Google Sheet.
+AI Judge graded the Road to Battlefield finals live: pitches recorded during the event were uploaded and scored the same day, while the human judges deliberated. Since July 2026 it has graded 400+ real applications across three programs (Road to Battlefield, the Silkroad Fellowship, and the [Alchemist Silicon Valley Residency](https://alchemistsvr.com)), after gating out no-shows and rows missing their required media, which are skipped before any model call. Each application runs through a three-role Gemini workflow over pitch videos and decks: an analyst that gathers evidence and cannot score, a grader that verifies and cannot score, and a head that scores approved evidence only, sampled three times to damp run-to-run variance, with scores and rationale written back into the same Google Sheet.
 
 This is a production system, not a demo: real applicants, real decisions, and a standing bias toward escalating to a human reviewer over silently guessing. Most of the code that looks unusual is there because of something that broke on a real batch.
 
@@ -52,24 +52,24 @@ Built and operated by Beibarys Nyussupov at Silkroad Innovation Hub, 2026.
 
 ## Stack
 
-- **google-adk** — agent harness; the three roles are three agents with
+- **google-adk**: agent harness; the three roles are three agents with
   separate output schemas, with the analyst-grader revision loop as a
   `LoopAgent`
-- **google-genai on Vertex AI** — model access; the Gemini Developer API is a
+- **google-genai on Vertex AI**: model access; the Gemini Developer API is a
   first-class second backend, and the code branches where the two genuinely
   differ (output schema with tools, inline bytes versus URI fetch)
-- **Gemini 3.5 Flash** — the reference configuration for all three roles;
+- **Gemini 3.5 Flash**: the reference configuration for all three roles;
   temperature 0 everywhere, head sampled `N_SAMPLES` times (default 3). The
   model names are required environment variables with no code default
-- **Python 3.12, stdlib concurrency** — `ThreadPoolExecutor` workers, one
+- **Python 3.12, stdlib concurrency**: `ThreadPoolExecutor` workers, one
   asyncio event loop per thread, no third-party task queue
-- **Pydantic** — agent output contracts: every criterion a required, bounded
+- **Pydantic**: agent output contracts; every criterion a required, bounded
   field, each rationale declared before its score
-- **Streamlit** — operator console, pinned to loopback
-- **ffmpeg / ffprobe** — transcode to MP4, duration probing, budget-driven
+- **Streamlit**: operator console, pinned to loopback
+- **ffmpeg / ffprobe**: transcode to MP4, duration probing, budget-driven
   shrink
-- **unittest** — 48 tests, all offline: no network, no Sheets, no model calls
-- **ruff + GitHub Actions** — lint, format check, and the test suite on every
+- **unittest**: 48 tests, all offline; no network, no Sheets, no model calls
+- **ruff + GitHub Actions**: lint, format check, and the test suite on every
   push and pull request
 
 ## How one row is graded
